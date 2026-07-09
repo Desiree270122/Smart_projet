@@ -282,4 +282,4 @@ st.success(
 )
 
 
-pied_navigation("pages/6_Resultats_et_Analyse.py")
+pied_navigation("vues/6_Resultats_et_Analyse.py")

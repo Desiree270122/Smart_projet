@@ -113,4 +113,4 @@ st.dataframe(tableau, use_container_width=True)
 
 from core.navigation import pied_navigation
 
-pied_navigation("pages/5_Comparaison_des_strategies.py")
+pied_navigation("vues/5_Comparaison_des_strategies.py")

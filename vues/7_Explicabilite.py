@@ -319,4 +319,4 @@ if correction:
     )
 
 
-pied_navigation("pages/7_Explicabilite.py")
+pied_navigation("vues/7_Explicabilite.py")

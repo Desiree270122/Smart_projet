@@ -10,16 +10,16 @@ import streamlit as st
 
 
 # Ordre de navigation de l'application. Accueil.py est l'entrée (hors dossier
-# pages/) mais fait partie du parcours, donc inclus ici.
+# vues/) mais fait partie du parcours, donc inclus ici.
 ORDRE_PAGES = [
-    ("Accueil", "pages/1_Accueil.py"),
-    ("Préparation", "pages/2_Preparation_donnees.py"),
-    ("Nouvelle simulation", "pages/8_Simulation_cycle_personnalise.py"),
-    ("Comparaison des stratégies", "pages/5_Comparaison_des_strategies.py"),
-    ("Analyse détaillée", "pages/6_Resultats_et_Analyse.py"),
-    ("Pourquoi cette décision ?", "pages/7_Explicabilite.py"),
-    ("Base de connaissances HESS", "pages/3_Ontologie_OntoHESS.py"),
-    ("Raisonnement neuro-symbolique", "pages/4_Moteur_Neurosymbolique.py"),
+    ("Accueil", "vues/1_Accueil.py"),
+    ("Préparation", "vues/2_Preparation_donnees.py"),
+    ("Nouvelle simulation", "vues/8_Simulation_cycle_personnalise.py"),
+    ("Comparaison des stratégies", "vues/5_Comparaison_des_strategies.py"),
+    ("Analyse détaillée", "vues/6_Resultats_et_Analyse.py"),
+    ("Pourquoi cette décision ?", "vues/7_Explicabilite.py"),
+    ("Base de connaissances HESS", "vues/3_Ontologie_OntoHESS.py"),
+    ("Raisonnement neuro-symbolique", "vues/4_Moteur_Neurosymbolique.py"),
 ]
 
 
@@ -27,7 +27,7 @@ def pied_navigation(cible_courante: str):
     """Affiche un pied de navigation cohérent (précédent / suivant).
 
     cible_courante : la cible `switch_page` de la page appelante,
-    par exemple "pages/5_Comparaison_des_strategies.py".
+    par exemple "vues/5_Comparaison_des_strategies.py".
     """
     cibles = [c for _, c in ORDRE_PAGES]
     try:

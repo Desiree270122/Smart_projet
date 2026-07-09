@@ -344,4 +344,4 @@ with st.expander(f"Détails techniques : les {len(FUZZY_RULE_NAMES)} règles exp
         st.markdown(f"- **{nom_regle}** : {RULE_LABELS_FR.get(nom_regle, '')}")
 
 
-pied_navigation("pages/3_Ontologie_OntoHESS.py")
+pied_navigation("vues/3_Ontologie_OntoHESS.py")

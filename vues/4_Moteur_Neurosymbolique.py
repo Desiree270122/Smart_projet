@@ -171,4 +171,4 @@ st.dataframe(
 
 from core.navigation import pied_navigation
 
-pied_navigation("pages/4_Moteur_Neurosymbolique.py")
+pied_navigation("vues/4_Moteur_Neurosymbolique.py")

@@ -1137,4 +1137,4 @@ st.session_state["soc_pb0"] = soc_pb0_apercu
 
 from core.navigation import pied_navigation
 
-pied_navigation("pages/2_Preparation_donnees.py")
+pied_navigation("vues/2_Preparation_donnees.py")
