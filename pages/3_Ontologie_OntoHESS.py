@@ -40,7 +40,18 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("Ontologie et règles")
+st.title("Ontologie OntoHESS — connaissances, règles et inférence")
+
+# Injecte les résultats de référence précalculés dans la session, pour que la
+# section « États symboliques à l'instant t » fonctionne sans relancer de
+# simulation. Si le précalcul n'existe pas encore, la section 4 gère elle-même
+# l'absence de données.
+try:
+    from core.resultats import assurer_donnees_session
+
+    assurer_donnees_session(st)
+except FileNotFoundError:
+    pass
 
 st.write(
     "Cette page présente la couche symbolique du projet 2SMART. Elle montre "
@@ -1016,10 +1027,6 @@ with st.container(border=True):
 # Navigation
 # ============================================================
 
-st.divider()
+from core.navigation import pied_navigation
 
-if st.button(
-    "Consulter les résultats et l’analyse",
-    type="primary",
-):
-    st.switch_page("pages/6_Resultats_et_Analyse.py")
+pied_navigation("pages/3_Ontologie_OntoHESS.py")

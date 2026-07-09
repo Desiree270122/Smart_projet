@@ -1150,12 +1150,6 @@ for nom, onglet in zip(codes_onglets, onglets):
 # Navigation vers la page de l’ontologie
 # ============================================================
 
-st.divider()
+from core.navigation import pied_navigation
 
-if st.button(
-    "Continuer vers l’ontologie et les règles expertes",
-    type="primary",
-):
-    st.switch_page(
-        "pages/3_Ontologie_OntoHESS.py"
-    )
+pied_navigation("pages/7_Explicabilite.py")

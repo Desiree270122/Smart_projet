@@ -463,12 +463,6 @@ st.info(
 # Navigation vers l’analyse instantanée
 # ============================================================
 
-st.divider()
+from core.navigation import pied_navigation
 
-if st.button(
-    "Consulter l’analyse instantanée",
-    type="primary",
-):
-    st.switch_page(
-        "pages/4_Moteur_Neurosymbolique.py"
-    )
+pied_navigation("pages/6_Resultats_et_Analyse.py")

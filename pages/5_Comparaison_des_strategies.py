@@ -121,3 +121,8 @@ st.info(
     "violations SOC et de corrections, grâce à la couche symbolique/ontologique. "
     "Change de critère ci-dessus pour visualiser ce compromis."
 )
+
+
+from core.navigation import pied_navigation
+
+pied_navigation("pages/5_Comparaison_des_strategies.py")

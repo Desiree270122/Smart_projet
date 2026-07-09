@@ -1138,6 +1138,6 @@ plt.close(
 st.session_state["soc_eb0"] = soc_eb0_apercu
 st.session_state["soc_pb0"] = soc_pb0_apercu
 
-st.divider()
-if st.button("Passer à la simulation (cycle personnalisé)", type="primary"):
-    st.switch_page("pages/8_Simulation_cycle_personnalise.py")
+from core.navigation import pied_navigation
+
+pied_navigation("pages/2_Preparation_donnees.py")

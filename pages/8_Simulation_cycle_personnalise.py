@@ -590,3 +590,8 @@ if "resultats_simulation" in st.session_state:
     with col_btn2:
         if st.button("Comparer les stratégies"):
             st.switch_page("pages/5_Comparaison_des_strategies.py")
+
+
+from core.navigation import pied_navigation
+
+pied_navigation("pages/8_Simulation_cycle_personnalise.py")

@@ -172,12 +172,6 @@ st.dataframe(
 # Navigation vers la comparaison des stratégies
 # ============================================================
 
-st.divider()
+from core.navigation import pied_navigation
 
-if st.button(
-    "Consulter la comparaison et l'optimisation",
-    type="primary",
-):
-    st.switch_page(
-        "pages/5_Comparaison_des_strategies.py"
-    )
+pied_navigation("pages/4_Moteur_Neurosymbolique.py")
