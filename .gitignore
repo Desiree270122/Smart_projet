@@ -1,0 +1,124 @@
+# ============================================================
+# .gitignore — Projet 2SMART (Projet_Artemis2)
+# ============================================================
+
+# ------------------------------------------------------------
+# Python
+# ------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ------------------------------------------------------------
+# Environnements virtuels
+# ------------------------------------------------------------
+venv/
+.venv/
+env/
+ENV/
+.conda/
+
+# ------------------------------------------------------------
+# Jupyter Notebook
+# ------------------------------------------------------------
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# ------------------------------------------------------------
+# Streamlit
+# ------------------------------------------------------------
+.streamlit/secrets.toml
+
+# ------------------------------------------------------------
+# Données du projet
+# Volumineuses et/ou regenerables a partir du cycle source -- a ne
+# pas versionner. Garder uniquement un README ou un .gitkeep dans
+# ces dossiers si tu veux preserver leur structure sur git.
+# ------------------------------------------------------------
+data/*.csv
+data/processed/
+data/raw/
+!data/.gitkeep
+
+# Fichiers de cycle prepares/telecharges depuis l'application
+cycle_prepare.csv
+cycle_prepare.xlsx
+resultats_*.csv
+resultats_*.xlsx
+
+# ------------------------------------------------------------
+# Modeles entraines et scalers
+# Fichiers binaires volumineux (poids PyTorch, normalisation) --
+# a gerer via git-lfs si tu veux vraiment les versionner, sinon
+# a distribuer separement de git.
+# ------------------------------------------------------------
+models/checkpoints/*.pt
+models/*.npz
+!models/.gitkeep
+
+# ------------------------------------------------------------
+# Resultats generes (figures, predictions, tables)
+# ------------------------------------------------------------
+results/figures/
+results/predictions/
+results/tables/
+!results/.gitkeep
+
+# ------------------------------------------------------------
+# Ontologies (OntoHESS)
+# Fichiers .owl/.rdf potentiellement volumineux ou generes/exportes --
+# a distribuer separement si tu ne veux pas les versionner. Si tu changes
+# d'avis, les fichiers .owl restent en general assez legers pour etre
+# suivis normalement par git (contrairement aux poids de modele).
+# ------------------------------------------------------------
+ontologies/
+!ontologies/.gitkeep
+
+# ------------------------------------------------------------
+# Systeme d'exploitation
+# ------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ------------------------------------------------------------
+# Editeurs / IDE
+# ------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ------------------------------------------------------------
+# Logs et fichiers temporaires
+# ------------------------------------------------------------
+*.log
+*.tmp
+*.bak
+
+
+# ------------------------------------------------------------
+# Modeles entraines et scalers
+# ------------------------------------------------------------
+models/*.pt
+models/**/*.pt
+models/*.npz
+!models/.gitkeep
+
+# Donnees (xlsx en plus du csv)
+data/*.xlsx
+
+# Fichiers/dossiers locaux specifiques a cette machine
+.qodo/
+get-pip.py
+pages_src/
+config/
+app_config.json

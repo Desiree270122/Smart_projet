@@ -1,38 +1,41 @@
-# Application 2SMART — Guide de lancement et état d’avancement
+# 2SMART — Gestion neurosymbolique de l'énergie pour un HESS
 
-## 1. Présentation générale
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
+![Streamlit](https://img.shields.io/badge/Streamlit-app-FF4B4B)
+![PyTorch](https://img.shields.io/badge/PyTorch-mod%C3%A8les-EE4C2C)
+![Statut](https://img.shields.io/badge/statut-7%2F7%20strat%C3%A9gies%20op%C3%A9rationnelles-brightgreen)
 
-L’application 2SMART permet de préparer un cycle de conduite, de simuler plusieurs stratégies de gestion d’énergie, de comparer leurs performances et d’analyser les décisions prises par les différents modèles EMS.
+Application interactive de gestion d'énergie pour un système de stockage hybride (HESS) en véhicule électrique : répartition de la puissance entre une batterie d'énergie (EB) et une batterie de puissance (PB), comparaison de 7 stratégies EMS (déterministes, apprises, neurosymboliques), filtre de sécurité physique, explicabilité et export des résultats.
 
-Elle intègre également des fonctions de visualisation, d’explicabilité, de consultation des règles symboliques et d’exportation des résultats.
+Projet réalisé dans le cadre d'un stage de recherche — ICube (CNRS UMR 7357), INSA Strasbourg.
 
 ---
 
-## 2. Lancement de l’application
+## Sommaire
 
-Commence par installer les dépendances nécessaires :
+1. [Lancement](#1-lancement)
+2. [Fichiers nécessaires](#2-fichiers-nécessaires-au-fonctionnement-des-modèles)
+3. [Fonctionnalités opérationnelles](#3-fonctionnalités-opérationnelles)
+4. [Points encore ouverts](#4-points-encore-ouverts)
+5. [Organisation des fichiers](#5-organisation-des-fichiers)
+6. [État actuel](#6-état-actuel)
+
+---
+
+## 1. Lancement
 
 ```bash
 pip install -r requirements.txt
-```
-
-Lance ensuite l’application Streamlit avec la commande suivante :
-
-```bash
 streamlit run Accueil.py
 ```
 
+`torch_geometric` (nécessaire uniquement pour `EMS_GNN`) est importé de façon paresseuse : son absence ne bloque pas les 6 autres stratégies.
+
 ---
 
-## 3. Fichiers nécessaires au fonctionnement des modèles
+## 2. Fichiers nécessaires au fonctionnement des modèles
 
-Les poids entraînés des modèles doivent être placés dans le dossier suivant :
-
-```text
-models/checkpoints/
-```
-
-Les fichiers attendus sont :
+### Poids entraînés — `models/checkpoints/`
 
 ```text
 EMS_MLP.pt
@@ -42,204 +45,95 @@ EMS_LSTM_neurosymbolic.pt
 EMS_GNN.pt
 ```
 
-Le fichier de normalisation du modèle GNN doit être placé ici :
+### Fichiers de normalisation (scalers) — `models/`
 
 ```text
-models/gnn_node_scalers.npz
+EMS_MLP_scalers.npz
+EMS_LSTM_scalers.npz
+EMS_LSTM_neurosymbolic_scalers.npz
+mlp_ns_scalers.npz          # nom different de la convention EMS_<nom>_scalers.npz
+gnn_node_scalers.npz
 ```
 
-Les graphes préconstruits utilisés pour l’évaluation hors ligne du GNN doivent être enregistrés dans :
+Sans ces fichiers, chaque modèle concerné tourne quand même (avec un avertissement explicite dans l'application), mais ses entrées ne sont pas normalisées et ses résultats sont peu fiables.
+
+### Graphes de test préconstruits (évaluation hors ligne du GNN) — `data/processed/`
 
 ```text
-data/processed/hess_graphs.pt
+hess_graphs.pt
+```
+
+### Cycle de conduite de référence — `data/`
+
+```text
+Artemis.csv
 ```
 
 ---
 
-## 4. Fonctionnalités déjà opérationnelles
+## 3. Fonctionnalités opérationnelles
 
-Les éléments suivants sont actuellement intégrés et utilisables dans l’application :
+* filtre de sécurité physique (SOC, puissance, courant, convertisseur) ;
+* préparation et import de cycles de conduite (tout format, avec ou sans en-tête) ;
+* configuration de l'architecture des batteries et du convertisseur, appliquée en direct à la simulation ;
+* **les 7 stratégies EMS simulées en boucle fermée** ;
+* comparaison à la référence hors ligne `alpha-star` ;
+* visualisation de l'évolution des SOC, puissances et courants ;
+* analyse instantanée des décisions ;
+* explicabilité par stratégie ;
+* consultation des concepts symboliques et de la base de règles floues ;
+* relecture en pseudo-temps réel ;
+* export des résultats (CSV / Excel), par stratégie ou combiné.
 
-* le filtre de sécurité physique ;
-* la stratégie fondée sur la limitation de puissance ;
-* la logique floue ;
-* la référence physique alpha-star ;
-* la simulation en boucle fermée de plusieurs stratégies EMS ;
-* la préparation et l’importation de cycles de conduite ;
-* la visualisation de l’évolution des SOC ;
-* l’analyse instantanée des décisions ;
-* la comparaison des stratégies ;
-* l’explicabilité des modèles ;
-* la consultation des concepts symboliques et des règles ;
-* la relecture des résultats en pseudo-temps réel ;
-* l’exportation des résultats aux formats CSV et Excel.
+### Les 7 stratégies
 
-Les stratégies actuellement simulées en boucle fermée sont :
-
-```text
-EMS_power_limitation
-EMS_fuzzy_logic
-EMS_MLP
-EMS_MLP_neurosymbolic
-```
-
-L’application comprend également l’ensemble des pages de navigation, de la préparation des données jusqu’à l’exportation des résultats.
+| Stratégie | Type | Statut |
+|---|---|---|
+| `EMS_power_limitation` | Déterministe | Fiable |
+| `EMS_fuzzy_logic` | Déterministe (7 règles) | Fiable |
+| `EMS_MLP` | Appris (tabulaire) | Fiable (5 entrées confirmées) |
+| `EMS_MLP_neurosymbolic` | Hybride | Fonctionnel — cible d'entraînement non confirmée |
+| `EMS_LSTM` | Appris (temporel) | Fonctionnel — conversion sortie→alpha non confirmée |
+| `EMS_LSTM_neurosymbolic` | Hybride | Fonctionnel — cible d'entraînement non confirmée |
+| `EMS_GNN` | Appris (relationnel) | Fonctionnel — construction du graphe en boucle fermée non confirmée |
 
 ---
 
-## 5. Points à vérifier avant une utilisation définitive
+## 4. Points encore ouverts
 
-Certains éléments doivent encore être confirmés à partir des notebooks d’entraînement et du cahier des charges.
+La plupart des zones d'ombre initiales ont été résolues en confrontant le code aux notebooks source (01 à 12). Il reste :
 
-Ces points sont volontairement signalés dans le code par la mention :
+### 4.1 Conversion de la sortie LSTM en `alpha`
 
-```text
-À CONFIRMER
-```
+`EMS_LSTM` et `EMS_LSTM_neurosymbolic` sortent `Pdem`, `ΔSOC_EB`, `ΔSOC_PB` — jamais `alpha` directement. La fonction `deriver_alpha_depuis_sortie_lstm` inverse l'équation confirmée de mise à jour du SOC pour en déduire un `alpha` exploitable. **C'est une interprétation physique de notre part, pas une formule confirmée** dans un notebook source.
 
-Des avertissements sont également affichés dans l’interface lorsque l’application rencontre une fonctionnalité qui n’est pas encore complètement validée.
+### 4.2 Construction du graphe GNN en boucle fermée
 
-### 5.1 Colonnes d’entrée des modèles MLP
+`construire_graphe_instant` reproduit la topologie confirmée (5 nœuds, arêtes exactes, liaison directe EB-moteur incluse) de `05_EMS_graph_construction.ipynb`, mais sans appliquer la normalisation du scaler pendant la construction elle-même. À vérifier avant de considérer les résultats comme fiables.
 
-Les constantes suivantes sont définies dans `ems_core.py` :
+### 4.3 Colonnes de `EMS_LSTM_neurosymbolic`
 
-```text
-MLP_INPUT_COLS
-MLP_NS_INPUT_COLS
-```
+Les 11 colonnes confirmées (`08_EMS_LSTM_neurosymbolic.ipynb`) sont câblées, mais dépendent d'un seuil de variance calculé sur le jeu d'entraînement d'origine (indicateurs symboliques jugés « constants » donc exclus) — ce choix n'est pas garanti de rester valide sur un autre cycle.
 
-La liste actuellement utilisée contient cinq variables connues, alors que neuf variables ont été évoquées pendant le développement.
+### 4.4 Cibles d'entraînement des modèles LSTM
 
-La liste définitive doit donc être vérifiée dans le notebook :
+Confirmées pour `EMS_MLP`/`EMS_MLP_neurosymbolic` (`alpha_ems_alpha_star`) et `EMS_GNN` (`alpha_historical`). **Non confirmées** pour `EMS_LSTM` et `EMS_LSTM_neurosymbolic`.
 
-```text
-11_EMS_MLP.ipynb
-```
+### 4.5 Contenu exact de la fonction de perte neurosymbolique
 
-L’ordre des variables doit également être identique à celui utilisé pendant l’entraînement.
+La composition (target/rules/physics/balance/continuité/convergence pour MLP-NS ; data/bounds/physics/rules pour LSTM-NS) est confirmée par les logs d'entraînement, mais la composante `rules` y apparaît systématiquement à 0,0000 — signal à investiguer, pas encore expliqué.
+
+> Ces points sont signalés directement dans l'application par des avertissements explicites lors de la simulation, et dans `ems_core.py` par des commentaires précisant la source de chaque hypothèse.
 
 ---
 
-### 5.2 Hyperparamètres des modèles MLP et LSTM
-
-Certains hyperparamètres doivent encore être confirmés, notamment :
-
-* le nombre de neurones dans les couches cachées ;
-* le nombre de couches ;
-* le taux de dropout ;
-* la taille des séquences du LSTM ;
-* les dimensions exactes des entrées et des sorties.
-
-Les valeurs actuellement présentes dans `ems_core.py` sont cohérentes avec l’architecture supposée, mais elles doivent être comparées aux notebooks d’entraînement.
-
-Lorsqu’un fichier `.pt` ne se charge pas à cause d’une erreur de dimension, il faut vérifier que l’architecture déclarée dans l’application correspond exactement à celle du modèle sauvegardé.
-
----
-
-### 5.3 Simulation des modèles LSTM
-
-Les modèles suivants peuvent être chargés :
-
-```text
-EMS_LSTM
-EMS_LSTM_neurosymbolic
-```
-
-Cependant, ils ne sont pas encore utilisés directement dans la simulation en boucle fermée.
-
-Le modèle LSTM produit actuellement trois sorties :
-
-```text
-Pdem
-delta_SOC_EB
-delta_SOC_PB
-```
-
-Il ne produit donc pas directement une valeur d’alpha.
-
-La méthode permettant de convertir ces sorties en une décision de répartition n’a pas encore été confirmée.
-
-La fonction suivante reste donc volontairement non implémentée :
-
-```python
-deriver_alpha_depuis_sortie_lstm
-```
-
-Tant que cette conversion n’est pas définie et validée, les modèles LSTM restent disponibles pour la prédiction et l’explicabilité, mais pas pour la décision directe en boucle fermée.
-
----
-
-### 5.4 Simulation du modèle GNN
-
-Le modèle EMS_GNN peut être chargé et utilisé pour l’évaluation hors ligne sur les graphes de test déjà construits.
-
-Il peut également être analysé avec GNNExplainer depuis la page consacrée à l’explicabilité.
-
-En revanche, son utilisation sur un nouveau cycle nécessite de reconstruire un graphe à chaque instant de la simulation.
-
-La procédure exacte doit respecter :
-
-* la structure des cinq nœuds ;
-* les relations entre les nœuds ;
-* les caractéristiques de chaque nœud ;
-* la normalisation utilisée pendant l’entraînement ;
-* l’ordre exact des variables.
-
-La fonction suivante reste donc à compléter :
-
-```python
-construire_graphe_instant
-```
-
-Tant que cette fonction n’est pas validée, EMS_GNN reste réservé à l’évaluation hors ligne.
-
----
-
-### 5.5 Constantes physiques à confirmer
-
-Certaines constantes doivent encore être vérifiées dans le cahier des charges ou dans les documents techniques du système.
-
-Les principaux points concernés sont :
-
-```text
-SOC_PB_MIN : 0.15 ou 0.20
-V_PB : 400 V ou 402,60 V
-SOC_LOW_THRESHOLD
-```
-
-Ces valeurs influencent directement les contraintes physiques, les règles floues et l’évolution des SOC.
-
-Elles doivent donc être définitivement fixées avant la validation finale de l’application.
-
----
-
-### 5.6 Calcul de la puissance à partir de la vitesse
-
-L’application permet de calculer la puissance demandée à partir du profil de vitesse lorsque le fichier importé ne contient pas directement de colonne de puissance.
-
-Ce calcul repose sur la dynamique longitudinale du véhicule et prend notamment en compte :
-
-* la force aérodynamique ;
-* la résistance au roulement ;
-* la gravité ;
-* l’accélération ;
-* la masse du véhicule ;
-* la surface frontale ;
-* le coefficient de traînée ;
-* la pente de la route.
-
-Les paramètres utilisés doivent néanmoins être vérifiés pour s’assurer qu’ils correspondent exactement au véhicule étudié dans le projet 2SMART.
-
----
-
-## 6. Organisation des fichiers
-
-La structure recommandée du projet est la suivante :
+## 5. Organisation des fichiers
 
 ```text
 Accueil.py
 ems_core.py
 requirements.txt
+.gitignore
 
 pages/
 ├── 2_Preparation_donnees.py
@@ -258,46 +152,27 @@ models/
 │   ├── EMS_LSTM.pt
 │   ├── EMS_LSTM_neurosymbolic.pt
 │   └── EMS_GNN.pt
+├── EMS_MLP_scalers.npz
+├── EMS_LSTM_scalers.npz
+├── EMS_LSTM_neurosymbolic_scalers.npz
+├── mlp_ns_scalers.npz
 └── gnn_node_scalers.npz
 
 data/
+├── Artemis.csv
 └── processed/
     └── hess_graphs.pt
+
+ontologies/
+└── OntoHESS.owl
 ```
 
 ---
 
-## 7. Recommandations avant la mise en production
+## 6. État actuel
 
-Avant de considérer l’application comme complètement finalisée, il est recommandé de :
+L'application couvre l'intégralité du pipeline : import et préparation d'un cycle de conduite, configuration de l'architecture physique (batteries, convertisseur), simulation des 7 stratégies EMS en boucle fermée, comparaison à la référence `alpha-star`, explicabilité, consultation de l'ontologie et des règles, export des résultats.
 
-1. vérifier les colonnes d’entrée exactes des modèles ;
-2. confirmer les hyperparamètres utilisés pendant l’entraînement ;
-3. charger les mêmes scalers que ceux utilisés dans les notebooks ;
-4. valider la conversion des sorties LSTM vers une décision EMS ;
-5. implémenter la construction dynamique des graphes GNN ;
-6. confirmer les constantes physiques encore incertaines ;
-7. vérifier les paramètres du véhicule utilisés pour calculer la puissance ;
-8. tester l’application sur plusieurs cycles de conduite ;
-9. vérifier la cohérence des SOC, des puissances et des courants ;
-10. documenter les versions finales des modèles utilisés.
+La batterie d'énergie (EB) fournit l'essentiel de l'énergie sur la durée du trajet ; la batterie de puissance (PB) intervient en assistance lors des pics de demande — comportement confirmé empiriquement (`alpha_ems_eb_priority` moyen ≈ 0,11 sur les données d'entraînement).
 
----
-
-## 8. État actuel de l’application
-
-L’application constitue déjà une base fonctionnelle pour :
-
-* importer et préparer un cycle de conduite ;
-* simuler les stratégies EMS actuellement déployables ;
-* comparer leurs performances ;
-* analyser la répartition de l’énergie entre l’EB et la PB ;
-* expliquer les décisions produites ;
-* consulter les règles symboliques ;
-* exporter les résultats.
-
-La batterie d’énergie fournit principalement l’énergie nécessaire au véhicule sur la durée, tandis que la batterie de puissance intervient pour répondre aux pics de puissance et aux sollicitations rapides.
-
-Les éléments restant à finaliser concernent principalement l’intégration complète des modèles LSTM et GNN, ainsi que la validation définitive de certains paramètres physiques et de certaines configurations d’entraînement.
-#   S m a r t _ p r o j e t  
- 
+Les points encore ouverts (section 4) concernent des interprétations physiques assumées comme telles plutôt que des blocages fonctionnels : les 7 stratégies tournent et produisent des résultats exploitables, avec un niveau de confiance clairement différencié et signalé dans l'interface.

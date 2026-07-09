@@ -1,0 +1,18 @@
+{
+  "selected_on": "validation",
+  "criterion": "minimum mean physical cost on common feasible samples",
+  "best_variant": "MLP_LSTM",
+  "best_seed": 44,
+  "input_columns": [
+    "hasPower",
+    "SOC_EB",
+    "SOC_PB",
+    "speed",
+    "hasAcceleration",
+    "Pdem_pred_ns",
+    "delta_soc_eb_pred_ns",
+    "delta_soc_pb_pred_ns"
+  ],
+  "checkpoint": "C:\\Users\\Admin\\Desktop\\Projet_Artemis2\\models\\ablation_MLP_LSTM_seed_44.pt",
+  "scaler": "C:\\Users\\Admin\\Desktop\\Projet_Artemis2\\models\\ablation_MLP_LSTM_scaler.npz"
+}

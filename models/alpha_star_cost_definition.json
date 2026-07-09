@@ -1,0 +1,15 @@
+{
+  "alpha_grid_step": 0.001,
+  "weights": {
+    "power_stress": 0.3,
+    "energy_throughput": 0.2,
+    "soc_risk": 0.25,
+    "converter_stress": 0.1,
+    "continuity": 0.15
+  },
+  "converter_ratio_discharge": 9.493670886075948,
+  "converter_ratio_charge": 9.493670886075948,
+  "soc_tolerance": 0.0005,
+  "dt_seconds": 1.0,
+  "description": "Alpha-star minimizes a surrogate physical cost (power stress, energy throughput, SOC risk, converter stress, continuity) under hard constraints."
+}
