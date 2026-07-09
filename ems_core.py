@@ -1,14 +1,4 @@
-"""
-ems_core.py — Module partagé regroupant les fonctions physiques, le filtre de sécurité,
-les classes de modèles, la logique floue, les états symboliques et le chargement des
-sept stratégies EMS. Il constitue la source de référence commune aux notebooks et
-à l'application Streamlit.
 
-ATTENTION — plusieurs éléments sont marqués « À CONFIRMER » dans ce fichier. Ils
-correspondent à des points qui n'ont pas encore été vérifiés dans les notebooks
-sources, notamment certains hyperparamètres MLP/LSTM et certaines colonnes d'entrée.
-Ces valeurs ne doivent donc pas être considérées comme définitives avant vérification.
-"""
 
 from pathlib import Path
 import time
@@ -27,14 +17,7 @@ except ImportError as _exc:
     ) from _exc
 
 
-# torch_geometric N'EST PAS importé au chargement du module. Il est importé
-# uniquement à la demande, lors de la première utilisation réelle d'EMS_GNN
-# dans la fonction _import_torch_geometric().
-#
-# Sur certaines installations Windows, l'importation de torch_geometric au démarrage
-# peut rester bloquée si torch-scatter ou torch-sparse n'est pas compatible avec la
-# version installée de torch/CUDA. Ce problème bloquait toute l'application, y compris
-# les pages qui n'utilisent pas le GNN, car ems_core.py est importé par chaque page.
+
 
 TORCH_GEOMETRIC_AVAILABLE = None  # None = non testé ; True/False = résultat du premier test
 
@@ -66,15 +49,30 @@ def _import_torch_geometric():
     return TORCH_GEOMETRIC_AVAILABLE
 
 
-# ============================================================
-# Arborescence du projet (à adapter si la structure réelle est différente)
-# ============================================================
 
-ROOT_DIR = Path(__file__).resolve().parent.parent  # ems_core.py se trouve dans code/. ROOT_DIR pointe
-                                                     # vers le dossier du projet (Projet_Artemis2/),
-                                                     # qui contient les dossiers frères config/, data/,
-                                                     # models/ et code/. Si ems_core.py est déplacé,
-                                                     # cette ligne doit être ajustée en conséquence.
+
+def _resolve_root_dir():
+    """Détermine le dossier racine du projet (celui qui contient models/,
+    data/, results/, ...).
+
+    On part du dossier où se trouve ems_core.py puis on remonte, et on
+    retient le premier dossier qui contient réellement 'models' ou 'data'.
+    Cette détection rend le chargement des modèles indépendant de la
+    structure exacte : que ems_core.py soit à la racine du dépôt (cas du
+    déploiement Streamlit Cloud, où le dossier code/ EST la racine) ou dans
+    un sous-dossier code/ d'un projet plus large, les chemins restent
+    corrects sans modification manuelle.
+    """
+    here = Path(__file__).resolve().parent
+    for candidate in (here, here.parent, here.parent.parent):
+        if (candidate / "models").is_dir() or (candidate / "data").is_dir():
+            return candidate
+    # Aucun dossier trouvé (première exécution sur une structure vide) :
+    # on prend le dossier de ems_core.py, qui est la racine du dépôt déployé.
+    return here
+
+
+ROOT_DIR = _resolve_root_dir()
 
 DATA_DIR = ROOT_DIR / "data"
 PROCESSED_DIR = DATA_DIR / "processed"
@@ -102,20 +100,16 @@ for _directory in [
     )
 
 
-# ============================================================
-# Constantes physiques validées
-# ============================================================
 
 V_EB_PACK_NOM = 450.0
-V_PB_PACK_NOM = 402.6  # confirme (01_configuration.ipynb) -- l'ambiguite 400 vs 402.6 est tranchee
-V_HESS_BUS_NOM = 402.6  # confirme (01_configuration.ipynb / 05_EMS_graph_construction) -- tension du bus HESS, egale a V_PB_PACK_NOM
+V_PB_PACK_NOM = 402.6  
+V_HESS_BUS_NOM = 402.6  
 
 CAPACITY_EB_AH = 30.4664
 CAPACITY_PB_AH = 7.4196
 
 SOC_EB_MIN, SOC_EB_MAX = 0.20, 1.0
-SOC_PB_MIN, SOC_PB_MAX = 0.20, 1.0  # confirme (01_configuration.ipynb) -- 0.20 tranche, pas 0.15
-
+SOC_PB_MIN, SOC_PB_MAX = 0.20, 1.0  
 SOC_TOL = 5e-4
 EPS_POWER_W = 100.0
 DT_SECONDS = 1.0
@@ -174,14 +168,7 @@ _P_EB_CONV_MIN = (
 )
 
 
-# ============================================================
-# Configuration du convertisseur par composants
-# La puissance totale du convertisseur n'est PAS une constante fixe :
-# elle depend du nombre de composants (modules) installes en parallele.
-# Les valeurs par defaut ci-dessous (1 composant) reproduisent exactement
-# les constantes fixes P_CONV_MIN_W/P_CONV_MAX_W = -760/1520 W utilisees
-# jusqu'ici -- modifiable depuis la page Preparation des donnees (bloc 9).
-# ============================================================
+
 
 CONVERTER_N_COMPOSANTS = 1
 CONVERTER_P_DECHARGE_PAR_COMPOSANT_W = 1520.0
@@ -217,15 +204,7 @@ DEVICE = torch.device(
 )
 
 
-# ============================================================
-# Paramètres du véhicule
-# Dynamique longitudinale et constantes confirmées
-#
-# Ces valeurs peuvent être modifiées depuis la page
-# « Préparation des données ».
-# Les valeurs définies ici correspondent aux paramètres
-# par défaut validés lors du cadrage du projet.
-# ============================================================
+
 
 VEHICLE_MASS_KG = 1400.0
 GRAVITY_MS2 = 9.81
@@ -238,17 +217,6 @@ ROAD_SLOPE_RAD = 0.0
 DEFAULT_SAMPLING_HZ = 1.0
 
 
-# ============================================================
-# Parametres cellule -- architecture des packs EB et PB
-# Modifiables depuis la page Preparation des donnees (bloc 7).
-# La formule Energie = DE * Masse est CONFIRMEE correcte par l'encadrant
-# (2026) -- l'ecart precedemment observe avec les anciennes valeurs de
-# reference (13709.89 Wh EB, 2987.12 Wh PB) venait d'une erreur de calcul
-# de son cote, pas de la formule. set_battery_pack_parameters() applique
-# desormais les caracteristiques calculees a partir de ces parametres
-# cellule (bloc 7/8 de la page Preparation des donnees) aux constantes
-# reellement utilisees par le moteur de simulation.
-# ============================================================
 
 CELL_EB_I_RECHARGE_A = -2.0
 CELL_EB_I_DECHARGE_A = 4.0
@@ -342,10 +310,6 @@ def set_battery_pack_parameters(pack, caracteristiques):
     ENERGY_COST_NORMALIZER = max(1.0 / ENERGY_SHARE_EB**2, 1.0 / ENERGY_SHARE_PB**2)
 
 
-# ============================================================
-# Importation générique des fichiers et dynamique
-# longitudinale du véhicule
-# ============================================================
 
 _COLUMN_KEYWORDS = {
     "time": [
@@ -2551,36 +2515,23 @@ LSTM_NS_SCALER_FILE = MODELS_DIR / "EMS_LSTM_neurosymbolic_scalers.npz"  # A CON
 LSTM_FEATURE_COLS = [
     "speed", "hasPower", "hasAcceleration", "hasTotalForce",
     "SOC_EB", "SOC_PB", "I_EB",
-]  # confirme -- attention : hasTotalForce n'existe que si la puissance a ete
-   # calculee via la dynamique du vehicule (absente si hasPower est fourni
-   # directement) ; I_EB est suivi dynamiquement (P_EB/V_EB_PACK_NOM du pas
-   # precedent), pas une colonne du cycle brut.
+] 
 
-# ATTENTION -- CONFLIT NON RESOLU : 01_configuration.ipynb definit
-# LSTM_NS_INPUT_COLS = LSTM_FEATURE_COLS (7) + SYMBOLIC_COLS (8) = 15 colonnes.
-# Mais le fichier de poids reel (EMS_LSTM_neurosymbolic.pt) attendait 11
-# entrees a l'erreur de chargement empirique. 15 != 11 -- soit ce notebook
-# n'est pas celui utilise pour l'entrainement final, soit seul un
-# sous-ensemble des 8 SYMBOLIC_COLS a ete retenu. Liste ci-dessous
-# INCOMPLETE (placeholder a 11) tant que ce conflit n'est pas tranche.
+
 LSTM_NS_FEATURE_COLS = [
     "speed", "hasPower", "hasAcceleration", "hasTotalForce",
     "SOC_EB", "SOC_PB", "I_EB",
     "high_power_demand", "regenerative_braking", "zero_power_demand", "converter_risk",
-]  # CONFIRME -- sortie reelle de la cellule 2 de 08_EMS_LSTM_neurosymbolic.ipynb :
-   # "Indicateurs constants : ['EB_available', 'PB_available', 'EB_low_SOC', 'PB_low_SOC']"
-   # "Indicateurs utilises  : ['high_power_demand', 'regenerative_braking', 'zero_power_demand', 'converter_risk']"
-   # (les 4 premiers etats symboliques etaient constants sur leur jeu d'entrainement,
-   # donc exclus automatiquement par le notebook -- ce n'est pas garanti de rester
-   # vrai sur un autre cycle, mais c'est la liste reellement utilisee a l'entrainement)
+] 
 
-LSTM_OUTPUT_NAMES = ["Pdem_future", "delta_SOC_EB", "delta_SOC_PB"]  # confirme (01_configuration.ipynb)
 
-LSTM_WINDOW = 20  # confirme (01_configuration.ipynb)
 
+LSTM_OUTPUT_NAMES = ["Pdem_future", "delta_SOC_EB", "delta_SOC_PB"]  
+
+LSTM_WINDOW = 20 
 LSTM_HIDDEN_SIZE = 64
 LSTM_NUM_LAYERS = 2
-LSTM_DROPOUT = 0.20  # confirme (01_configuration.ipynb, etait 0.10 avant)
+LSTM_DROPOUT = 0.20  
 
 
 # --- EMS_GNN (confirmé) --------------------------------------------------
@@ -3543,19 +3494,7 @@ def simuler_toutes_strategies(
             )
 
 
-    # --------------------------------------------------------
-    # EMS_MLP_neurosymbolic
-    # --------------------------------------------------------
 
-    # --------------------------------------------------------
-    # EMS_LSTM et EMS_LSTM_neurosymbolic
-    #
-    # Simules en boucle fermee via une fenetre glissante + inversion
-    # physique de la sortie (voir deriver_alpha_depuis_sortie_lstm).
-    # LSTM_FEATURE_COLS est desormais confirme (01_configuration.ipynb).
-    # LSTM_NS_FEATURE_COLS reste un placeholder -- conflit non resolu entre
-    # 15 colonnes (notebook) et 11 (checkpoint reel), voir commentaire associe.
-    # --------------------------------------------------------
 
     def _construire_predicteur_lstm_brut(model, feature_cols, window, scaler=None):
         """Retourne une fonction (t, ligne, soc_eb, soc_pb) -> sortie brute
@@ -3640,10 +3579,7 @@ def simuler_toutes_strategies(
             with torch.no_grad():
                 sortie_brute = model(x)[0].cpu().numpy()
 
-            # Denormalisation de la sortie si le scaler contient y_mean/y_std
-            # (confirme present dans les scalers reels EMS_LSTM -- la sortie du
-            # modele est normalisee tout comme l'entree, il faut inverser cette
-            # transformation avant d'interpreter Pdem/delta_SOC_EB/delta_SOC_PB).
+            
             if scaler is not None and {"y_mean", "y_std"}.issubset(set(scaler.files)):
                 sortie_brute = sortie_brute * scaler["y_std"] + scaler["y_mean"]
 
@@ -3737,8 +3673,7 @@ def simuler_toutes_strategies(
                 if avert_colonnes:
                     avertissements.append(avert_colonnes)
 
-            # Instance dediee du predicteur LSTM brut : suit la propre trajectoire
-            # SOC de EMS_MLP_neurosymbolic, independamment de la strategie EMS_LSTM.
+
             predire_lstm_pour_ns = _construire_predicteur_lstm_brut(
                 modeles_charges["EMS_LSTM"], LSTM_FEATURE_COLS, LSTM_WINDOW, scaler_lstm_pour_ns,
             )
