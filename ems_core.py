@@ -133,6 +133,34 @@ ALPHA_GRID = np.arange(
     dtype=np.float64,
 )
 
+
+def set_alpha_grid_step(step):
+    """Redéfinit la résolution de la grille alpha utilisée par le filtre
+    physique (candidate_metrics, resoudre_decision_physique,
+    optimiser_alpha_star_sequence).
+
+    Cette grille est balayée à CHAQUE pas de temps et pour CHAQUE stratégie :
+    c'est le coût partagé dominant de la simulation. Une grille plus grossière
+    accélère fortement la simulation.
+
+    - step = 0.001 (1001 points) : résolution de référence, la plus lente.
+    - step = 0.005 (201 points)  : ~5x plus rapide sur le filtre.
+
+    L'impact sur la comparaison des stratégies est négligeable : les écarts de
+    coût entre stratégies (~0.02 à 0.05) sont bien plus grands qu'une
+    quantification d'alpha à 0.005. Pour un résultat « qualité publication »,
+    repasser à 0.001.
+    """
+    global ALPHA_GRID_STEP, ALPHA_GRID
+    ALPHA_GRID_STEP = float(step)
+    ALPHA_GRID = np.arange(
+        0.0,
+        1.0 + ALPHA_GRID_STEP / 2.0,
+        ALPHA_GRID_STEP,
+        dtype=np.float64,
+    )
+
+
 ALPHA_OPT_WEIGHTS = {
     "power_stress": 0.30,
     "energy_throughput": 0.20,

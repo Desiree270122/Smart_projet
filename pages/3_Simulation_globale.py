@@ -12,6 +12,7 @@ import torch
 
 from ems_core import (
     simuler_toutes_strategies,
+    set_alpha_grid_step,
     MODEL_DISPLAY_NAMES,
     load_mlp_simple,
     load_mlp_neurosymbolic,
@@ -405,24 +406,47 @@ st.info(
 
 
 @st.cache_data(show_spinner=False)
-def _simuler_en_cache(df, soc_eb0, soc_pb0, signature_modeles, _modeles_charges):
+def _simuler_en_cache(df, soc_eb0, soc_pb0, signature_modeles, pas_alpha, _modeles_charges):
     """
     Enveloppe mise en cache de la simulation globale.
 
-    Tant que le cycle (df), les SOC initiaux et l'ensemble des modèles chargés
-    (signature_modeles) ne changent pas, le résultat est réutilisé tel quel :
-    la simulation lourde n'est calculée qu'UNE seule fois, puis reste
-    instantanée sur les relances et rafraîchissements suivants.
+    Tant que le cycle (df), les SOC initiaux, l'ensemble des modèles chargés
+    (signature_modeles) et la précision de grille (pas_alpha) ne changent pas,
+    le résultat est réutilisé tel quel : la simulation lourde n'est calculée
+    qu'UNE seule fois, puis reste instantanée sur les relances suivantes.
 
     _modeles_charges est préfixé par « _ » afin que Streamlit ne tente pas de
     le hacher (les modèles PyTorch ne sont pas hachables) ; ce sont les noms
     de modèles (signature_modeles) qui servent de clé de cache à leur place.
 
+    pas_alpha règle la résolution de la grille alpha du filtre physique : plus
+    il est grossier, plus la simulation est rapide (impact négligeable sur la
+    comparaison des stratégies).
+
     Le résultat (dictionnaires de trajectoires numpy + liste d'avertissements)
     est sérialisable, donc compatible avec st.cache_data.
     """
+    set_alpha_grid_step(pas_alpha)
     with torch.inference_mode():
         return simuler_toutes_strategies(df, soc_eb0, soc_pb0, _modeles_charges)
+
+
+pas_alpha = st.select_slider(
+    "Précision de la grille alpha (vitesse ⇄ précision)",
+    options=[0.001, 0.002, 0.005],
+    value=0.005,
+    format_func=lambda v: {
+        0.001: "0.001 — précis (lent, qualité publication)",
+        0.002: "0.002 — équilibré",
+        0.005: "0.005 — rapide (recommandé pour l'exploration)",
+    }[v],
+    help=(
+        "Pas de balayage du coefficient de répartition alpha dans le filtre "
+        "physique, appliqué à chaque pas de temps et chaque stratégie. "
+        "0.005 est environ 5× plus rapide que 0.001, avec un impact négligeable "
+        "sur la comparaison des stratégies. Repasse à 0.001 pour ton run final."
+    ),
+)
 
 
 if st.button(
@@ -442,6 +466,7 @@ if st.button(
             soc_eb0,
             soc_pb0,
             tuple(sorted(modeles_charges.keys())),
+            pas_alpha,
             modeles_charges,
         )
 
