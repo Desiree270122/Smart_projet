@@ -1,11 +1,3 @@
-"""
-Accueil.py
-
-Page d’accueil de l’application 2SMART.
-Cette page présente l’objectif de l’application, le système HESS
-et la navigation vers les principales fonctionnalités.
-"""
-
 import streamlit as st
 
 
@@ -131,47 +123,47 @@ m1, m2, m3 = st.columns(3)
 
 with m1:
     with st.container(border=True):
-        st.markdown("**Préparation des données**")
+        st.markdown("**2 · Données & Prétraitement**")
         st.write(
-            "Importer, vérifier et préparer le cycle de conduite utilisé "
-            "pour les simulations."
+            "Importer un cycle de conduite, calculer forces, puissance et "
+            "courants, et préparer les données pour les modèles."
         )
 
     with st.container(border=True):
-        st.markdown("**Simulation globale**")
+        st.markdown("**3 · Ontologie OntoHESS**")
         st.write(
-            "Appliquer une stratégie EMS sur l’ensemble du cycle et calculer "
-            "`alpha`, `P_EB` et `P_PB`."
+            "Classes, propriétés, règles et connaissances expertes "
+            "structurant le fonctionnement du HESS."
         )
 
 with m2:
     with st.container(border=True):
-        st.markdown("**Évolution du SOC**")
+        st.markdown("**4 · Moteur Neuro-Symbolique**")
         st.write(
-            "Analyser l’évolution de `SOC_EB` et `SOC_PB`, puis détecter les "
-            "éventuelles violations des limites physiques."
+            "À un instant t : puissance demandée, batterie(s) active(s), "
+            "décision du modèle et explication."
         )
 
     with st.container(border=True):
-        st.markdown("**Analyse instantanée**")
+        st.markdown("**5 · Comparaison des stratégies**")
         st.write(
-            "Étudier la décision prise par le modèle à un instant précis "
-            "du cycle de conduite."
+            "Classement des stratégies selon plusieurs critères et "
+            "désignation de la meilleure — résultats précalculés."
         )
 
 with m3:
     with st.container(border=True):
-        st.markdown("**Comparaison et optimisation**")
+        st.markdown("**6 · Résultats & Analyse**")
         st.write(
-            "Comparer les performances des différentes stratégies EMS "
-            "à partir d’indicateurs communs."
+            "Évolution des SOC et des puissances, alpha dans le temps, "
+            "violations et corrections."
         )
 
     with st.container(border=True):
-        st.markdown("**Explicabilité, ontologie et export**")
+        st.markdown("**7 · Explicabilité**")
         st.write(
-            "Expliquer les décisions des modèles, présenter les règles expertes "
-            "et exporter les résultats pour une analyse externe."
+            "Logique floue, états symboliques, filtre physique, alpha "
+            "proposé vs appliqué : pourquoi le modèle décide ainsi."
         )
 
 
@@ -181,23 +173,63 @@ with m3:
 # Démarrage
 # ============================================================
 
-st.subheader("Démarrage")
+st.subheader("Mode de fonctionnement")
 
-if "resultats_simulation" not in st.session_state:
-    st.info(
-        "Aucune simulation disponible pour le moment. "
-        "Veuillez commencer par la préparation des données afin de charger "
-        "et valider un cycle de conduite."
+mode1, mode2 = st.columns(2)
+
+with mode1:
+    with st.container(border=True):
+        st.markdown("**Mode démonstration (par défaut)**")
+        st.write(
+            "Les pages Comparaison, Résultats et Explicabilité affichent des "
+            "résultats **précalculés** : chargement **instantané**, idéal pour "
+            "la soutenance."
+        )
+
+with mode2:
+    with st.container(border=True):
+        st.markdown("**Mode cycle personnalisé**")
+        st.write(
+            "La page *Simulation — cycle personnalisé* relance une simulation "
+            "complète sur ton propre cycle : **plus long** (plusieurs minutes)."
+        )
+
+
+st.subheader("Synthèse")
+
+try:
+    from core.resultats import (
+        charger_reference,
+        calculer_metriques,
+        meilleure_strategie,
+        nom_affichage,
     )
 
+    _donnees = charger_reference()
+    _metriques = calculer_metriques(_donnees)
+    _meta = _donnees["meta"]
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Meilleure — coût", nom_affichage(meilleure_strategie(_metriques, "Coût énergétique")[0]))
+    c2.metric("Meilleure — sécurité", nom_affichage(meilleure_strategie(_metriques, "Sécurité physique")[0]))
+    c3.metric("Meilleure — équilibre SOC", nom_affichage(meilleure_strategie(_metriques, "Équilibre EB/PB")[0]))
+
+    st.caption(
+        f"Cycle de référence : {_meta['nb_points']:,} échantillons — "
+        f"{len(_metriques)} stratégies comparées.".replace(",", " ")
+    )
+    st.page_link(
+        "pages/5_Comparaison_des_strategies.py",
+        label="→ Voir la comparaison complète",
+    )
+
+except FileNotFoundError:
+    st.info(
+        "Résultats de référence non encore générés. Lance une fois, hors-ligne : "
+        "`python scripts/run_simulations.py` — ou prépare un cycle et utilise la "
+        "simulation personnalisée."
+    )
     st.page_link(
         "pages/2_Preparation_donnees.py",
         label="Aller à la préparation des données",
-    )
-
-else:
-    st.success(
-        "Une simulation est déjà disponible. Vous pouvez consulter les résultats "
-        "dans les pages Simulation globale, Évolution du SOC, Analyse instantanée "
-        "ou Comparaison et optimisation."
     )

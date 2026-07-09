@@ -63,15 +63,22 @@ st.caption(
 # Vérification des résultats disponibles
 # ============================================================
 
+from core.resultats import assurer_donnees_session
+
+try:
+    _source = assurer_donnees_session(st)
+except FileNotFoundError as exc:
+    st.error(str(exc))
+    st.info("Lance une fois le précalcul :  `python scripts/run_simulations.py`")
+    st.stop()
+
+st.caption(f"Source des données : {_source}")
+
 if (
     "resultats_simulation" not in st.session_state
     or "cycle_pret" not in st.session_state
 ):
-    st.warning("Une simulation globale doit être réalisée avant de consulter cette page.")
-
-    if st.button("Ouvrir la page de simulation globale"):
-        st.switch_page("pages/3_Simulation_globale.py")
-
+    st.warning("Aucune donnée disponible.")
     st.stop()
 
 
@@ -1145,5 +1152,5 @@ if st.button(
     type="primary",
 ):
     st.switch_page(
-        "pages/8_Ontologie_regles.py"
+        "pages/3_Ontologie_OntoHESS.py"
     )
