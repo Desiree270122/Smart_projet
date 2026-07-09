@@ -127,6 +127,17 @@ def valeur_ou_na(x, fmt="{:.3f}"):
     return "n/a"
 
 
+def pourcentage_ou_na(x, fmt="{:.1f} %"):
+    """Formate un état de charge (fraction 0–1) en pourcentage, ou n/a."""
+    try:
+        if np.isfinite(x):
+            return fmt.format(float(x) * 100.0)
+    except Exception:
+        pass
+
+    return "n/a"
+
+
 def obtenir_temps(n):
     """Retourne l’axe temporel."""
     if "time" in df.columns:
@@ -448,10 +459,10 @@ def afficher_metriques_decision(valeurs):
         st.metric("Alpha_PB appliqué", valeur_ou_na(valeurs["alpha_final_sel"]))
 
     with c2:
-        st.metric("Part EB", valeur_ou_na(valeurs["part_eb"]))
+        st.metric("SOC_EB", pourcentage_ou_na(valeurs["soc_eb_sel"]))
 
     with c3:
-        st.metric("Part PB", valeur_ou_na(valeurs["part_pb"]))
+        st.metric("SOC_PB", pourcentage_ou_na(valeurs["soc_pb_sel"]))
 
     with c4:
         st.metric("Filtre", "Corrigé" if valeurs["correction_sel"] else "Non corrigé")
@@ -473,15 +484,9 @@ def afficher_metriques_decision(valeurs):
     c9, c10, c11, c12 = st.columns(4)
 
     with c9:
-        st.metric("SOC_EB", valeur_ou_na(valeurs["soc_eb_sel"]))
-
-    with c10:
-        st.metric("SOC_PB", valeur_ou_na(valeurs["soc_pb_sel"]))
-
-    with c11:
         st.metric("I_EB", f"{valeurs['i_eb_sel']:.2f} A")
 
-    with c12:
+    with c10:
         st.metric("I_PB", f"{valeurs['i_pb_sel']:.2f} A")
 
 
@@ -537,12 +542,12 @@ def afficher_tableau_decision(valeurs):
         },
         {
             "Grandeur": "SOC_EB",
-            "Valeur": valeur_ou_na(valeurs["soc_eb_sel"]),
+            "Valeur": pourcentage_ou_na(valeurs["soc_eb_sel"]),
             "Lecture physique": "État de charge EB",
         },
         {
             "Grandeur": "SOC_PB",
-            "Valeur": valeur_ou_na(valeurs["soc_pb_sel"]),
+            "Valeur": pourcentage_ou_na(valeurs["soc_pb_sel"]),
             "Lecture physique": "État de charge PB",
         },
         {
