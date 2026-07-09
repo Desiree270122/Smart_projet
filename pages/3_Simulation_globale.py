@@ -178,10 +178,12 @@ with col_ml:
 
 charger_gnn = st.checkbox(
     "Inclure le modèle EMS GNN",
-    value=True,
+    value=False,
     help=(
-        "Le modèle GNN nécessite torch_geometric. "
-        "Laisse cette option activée pour simuler les 7 stratégies complètes."
+        "Le modèle GNN nécessite torch_geometric, dont l'import est lent "
+        "(plusieurs secondes) et ralentit fortement le démarrage de l'app. "
+        "Laisse cette option décochée pour un chargement rapide (6 stratégies) ; "
+        "coche-la seulement quand tu veux la 7ᵉ stratégie GNN."
     ),
 )
 
@@ -193,14 +195,16 @@ strategies_attendues = (
 
 
 @st.cache_resource(show_spinner=False)
-def _charger_modeles(charger_gnn: bool):
+def _charger_modeles_deterministes():
     """
-    Charge les modèles entraînés et conserve séparément
-    les éventuelles erreurs de chargement.
+    Charge les 4 modèles neuronaux déterministes (MLP, MLP-NS, LSTM, LSTM-NS)
+    et conserve séparément les éventuelles erreurs de chargement.
+
+    Ce cache ne dépend PAS de la case GNN : cocher/décocher le GNN ne
+    provoque plus le rechargement de ces modèles.
     """
     modeles = {}
     erreurs = {}
-    gnn_scaler = None
 
     chargeurs = {
         "EMS_MLP": load_mlp_simple,
@@ -221,13 +225,38 @@ def _charger_modeles(charger_gnn: bool):
         except Exception as exc:
             erreurs[nom] = str(exc)
 
+    return modeles, erreurs
+
+
+@st.cache_resource(show_spinner=False)
+def _charger_gnn():
+    """
+    Charge le modèle GNN dans un cache séparé. torch_geometric (import lent)
+    n'est sollicité que lorsque cette fonction est réellement appelée, donc
+    uniquement quand l'utilisateur coche « Inclure le modèle EMS GNN ».
+    """
+    gnn_model, gnn_scaler = load_gnn_simple()
+
+    if hasattr(gnn_model, "eval"):
+        gnn_model.eval()
+
+    return gnn_model, gnn_scaler
+
+
+def _charger_modeles(charger_gnn: bool):
+    """
+    Assemble les modèles à partir des deux caches (déterministes + GNN
+    optionnel), sans jamais muter les objets mis en cache.
+    """
+    modeles_det, erreurs_det = _charger_modeles_deterministes()
+
+    modeles = dict(modeles_det)
+    erreurs = dict(erreurs_det)
+    gnn_scaler = None
+
     if charger_gnn:
         try:
-            gnn_model, gnn_scaler = load_gnn_simple()
-
-            if hasattr(gnn_model, "eval"):
-                gnn_model.eval()
-
+            gnn_model, gnn_scaler = _charger_gnn()
             modeles["EMS_GNN"] = gnn_model
 
         except Exception as exc:
