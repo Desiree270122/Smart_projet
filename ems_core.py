@@ -1309,6 +1309,52 @@ def resoudre_decision_physique(
     }
 
 
+def analyser_capacites_hess(p_dem, soc_eb, soc_pb):
+    """Analyse des capacités instantanées du HESS avant toute décision EMS.
+
+    Détermine, pour la demande p_dem (W) et l'état SOC courant, la puissance de
+    TRACTION (décharge) maximale que chaque batterie peut fournir — bornée par
+    le SOC (une batterie au SOC minimal ne peut plus se décharger) et, pour l'EB,
+    par le convertisseur à puissance partielle. La faisabilité et la répartition
+    physique réellement réalisable proviennent du solveur `resoudre_decision_physique`
+    (source unique), afin d'éviter toute divergence avec le moteur de simulation.
+
+    Ce module agit comme un filtre physique : l'EMS ne choisit sa répartition que
+    parmi ce que les batteries et le convertisseur peuvent réellement fournir.
+    """
+    eb_dispo_decharge = (
+        0.0
+        if soc_eb <= SOC_EB_MIN + SOC_TOL
+        else float(min(P_EB_MAX_W, _P_EB_CONV_MAX))
+    )
+    pb_dispo_decharge = (
+        0.0
+        if soc_pb <= SOC_PB_MIN + SOC_TOL
+        else float(P_PB_MAX_W)
+    )
+    hess_dispo_decharge = eb_dispo_decharge + pb_dispo_decharge
+
+    decision = resoudre_decision_physique(0.5, p_dem, soc_eb, soc_pb)
+
+    return {
+        "p_dem_W": float(p_dem),
+        "soc_eb": float(soc_eb),
+        "soc_pb": float(soc_pb),
+        "eb_dispo_max_W": eb_dispo_decharge,
+        "pb_dispo_max_W": pb_dispo_decharge,
+        "hess_dispo_max_W": hess_dispo_decharge,
+        "marge_eb_W": eb_dispo_decharge - max(0.0, decision["P_EB_final"]),
+        "marge_pb_W": pb_dispo_decharge - max(0.0, decision["P_PB_final"]),
+        "faisable": bool(decision["feasible"]),
+        "P_EB_reparti_W": float(decision["P_EB_final"]),
+        "P_PB_reparti_W": float(decision["P_PB_final"]),
+        "P_non_servie_W": float(decision["P_unserved"]),
+        "P_regen_rejetee_W": float(decision["P_regen_curtailed"]),
+        "alpha": float(decision["alpha_final"]),
+        "explication": decision["explanation"],
+    }
+
+
 def optimiser_alpha_star_sequence(
     df,
     soc_eb0,
