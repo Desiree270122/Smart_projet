@@ -1322,15 +1322,28 @@ def analyser_capacites_hess(p_dem, soc_eb, soc_pb):
     Ce module agit comme un filtre physique : l'EMS ne choisit sa répartition que
     parmi ce que les batteries et le convertisseur peuvent réellement fournir.
     """
+    # Limite énergétique sur un pas : on ne peut pas décharger au point de faire
+    # passer le SOC sous son minimum (contrainte réellement appliquée par
+    # candidate_metrics via soc_eb_next >= SOC_EB_MIN). À SOC élevé cette limite
+    # n'est pas contraignante ; près du minimum elle réduit la puissance dispo.
+    limite_soc_eb = (
+        max(0.0, soc_eb - SOC_EB_MIN)
+        * 3600.0 * CAPACITY_EB_AH * V_EB_PACK_NOM / DT_SECONDS
+    )
+    limite_soc_pb = (
+        max(0.0, soc_pb - SOC_PB_MIN)
+        * 3600.0 * CAPACITY_PB_AH * V_PB_PACK_NOM / DT_SECONDS
+    )
+
     eb_dispo_decharge = (
         0.0
         if soc_eb <= SOC_EB_MIN + SOC_TOL
-        else float(min(P_EB_MAX_W, _P_EB_CONV_MAX))
+        else float(min(P_EB_MAX_W, _P_EB_CONV_MAX, limite_soc_eb))
     )
     pb_dispo_decharge = (
         0.0
         if soc_pb <= SOC_PB_MIN + SOC_TOL
-        else float(P_PB_MAX_W)
+        else float(min(P_PB_MAX_W, limite_soc_pb))
     )
     hess_dispo_decharge = eb_dispo_decharge + pb_dispo_decharge
 

@@ -1148,26 +1148,26 @@ st.write(
     "parmi les solutions **physiquement réalisables** — c'est un filtre physique."
 )
 
-cap_col1, cap_col2, cap_col3 = st.columns(3)
+st.caption(
+    f"États et paramètres utilisés : **SOC_EB = {soc_eb0_apercu * 100:.0f} %**, "
+    f"**SOC_PB = {soc_pb0_apercu * 100:.0f} %** (réglés ci-dessus, section « SOC initial »), "
+    "ainsi que la configuration des batteries et du convertisseur définie plus haut "
+    "sur cette page. Modifie ces réglages pour voir leur effet sur les capacités."
+)
 
-with cap_col1:
-    _p_dem_kw = st.slider(
-        "Puissance demandée (kW)",
-        -50.0,
-        170.0,
-        20.0,
-        0.5,
-        help="Positif = traction ; négatif = freinage / récupération.",
-    )
-with cap_col2:
-    _soc_eb_pct = st.slider("SOC batterie Énergie (%)", 20, 100, 60)
-with cap_col3:
-    _soc_pb_pct = st.slider("SOC batterie Puissance (%)", 20, 100, 70)
+_p_dem_kw = st.slider(
+    "Puissance demandée à analyser (kW)",
+    -50.0,
+    170.0,
+    20.0,
+    0.5,
+    help="Positif = traction ; négatif = freinage / récupération.",
+)
 
 _cap = core.analyser_capacites_hess(
     _p_dem_kw * 1000.0,
-    _soc_eb_pct / 100.0,
-    _soc_pb_pct / 100.0,
+    soc_eb0_apercu,
+    soc_pb0_apercu,
 )
 
 cap_m1, cap_m2, cap_m3, cap_m4 = st.columns(4)
