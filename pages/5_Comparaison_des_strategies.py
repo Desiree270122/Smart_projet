@@ -114,15 +114,6 @@ st.dataframe(tableau, use_container_width=True)
 # Note d'honnêteté scientifique (coût vs conformité)
 # ------------------------------------------------------------
 
-st.info(
-    "**Lecture honnête** : sur le seul *coût physique*, une stratégie neuronale "
-    "« simple » peut être marginalement meilleure. La valeur de l'approche "
-    "**neuro-symbolique** apparaît surtout sur la **sécurité** : moins de "
-    "violations SOC et de corrections, grâce à la couche symbolique/ontologique. "
-    "Change de critère ci-dessus pour visualiser ce compromis."
-)
-
-
 from core.navigation import pied_navigation
 
 pied_navigation("pages/5_Comparaison_des_strategies.py")
