@@ -3226,12 +3226,18 @@ def simuler_strategie_deterministe(
         dtype=float
     )
 
+    # Pré-extraction de toutes les lignes en dictionnaires natifs, une seule
+    # fois. Remplace un df.iloc[t] pandas par pas de temps (très lent) par un
+    # simple accès O(1) dans une liste. Résultat strictement identique :
+    # lignes[t] == df.iloc[t].to_dict().
+    lignes = df.to_dict("records")
+
     for t in range(n):
         p_dem = p_seq[t]
 
         alpha_req = proposer_alpha(
             t,
-            df.iloc[t],
+            lignes[t],
             soc_eb,
             soc_pb,
             alpha_prev,
@@ -3446,7 +3452,7 @@ def simuler_toutes_strategies(
             alpha_prev,
         ):
             valeurs = {
-                **ligne.to_dict(),
+                **ligne,
                 "SOC_EB": soc_eb,
                 "SOC_PB": soc_pb,
             }
@@ -3523,6 +3529,9 @@ def simuler_toutes_strategies(
             if col not in ("SOC_EB", "SOC_PB", "I_EB") and col not in colonnes_symboliques
         }
         colonnes_symboliques_utilisees = [c for c in colonnes_uniques if c in colonnes_symboliques]
+        # Puissance instantanee pre-extraite une fois (evite un df["hasPower"].iloc[t]
+        # pandas a chaque pas dans predire()).
+        puissance_instantanee = df["hasPower"].to_numpy(dtype=np.float64)
         historique_soc_eb, historique_soc_pb, historique_i_eb = [], [], []
         historique_symboliques = {c: [] for c in colonnes_symboliques_utilisees}
         avert_scaler_signale = [False]
@@ -3538,7 +3547,7 @@ def simuler_toutes_strategies(
             historique_i_eb.append(i_eb_realise)
 
             if colonnes_symboliques_utilisees:
-                p_dem_instant = float(df["hasPower"].iloc[t])
+                p_dem_instant = float(puissance_instantanee[t])
                 etats = compute_symbolic_states(
                     p_dem_instant, soc_eb, soc_pb, p_eb=i_eb_realise * V_EB_PACK_NOM,
                 )
@@ -3568,8 +3577,11 @@ def simuler_toutes_strategies(
 
             if scaler is not None:
                 try:
-                    for pas in range(fenetre.shape[0]):
-                        fenetre[pas, :] = appliquer_scaler(fenetre[pas, :], scaler)
+                    # appliquer_scaler diffuse moyenne/echelle sur le dernier axe :
+                    # l'appliquer a toute la fenetre (window, n_features) d'un coup
+                    # donne exactement le meme resultat que la boucle ligne par ligne,
+                    # mais en un seul appel vectorise.
+                    fenetre = appliquer_scaler(fenetre, scaler).astype(np.float32)
                 except ValueError as exc:
                     if not avert_scaler_signale[0]:
                         avertissements.append(f"Scaler LSTM non applique : {exc}")

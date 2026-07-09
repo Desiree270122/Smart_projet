@@ -404,6 +404,27 @@ st.info(
 )
 
 
+@st.cache_data(show_spinner=False)
+def _simuler_en_cache(df, soc_eb0, soc_pb0, signature_modeles, _modeles_charges):
+    """
+    Enveloppe mise en cache de la simulation globale.
+
+    Tant que le cycle (df), les SOC initiaux et l'ensemble des modèles chargés
+    (signature_modeles) ne changent pas, le résultat est réutilisé tel quel :
+    la simulation lourde n'est calculée qu'UNE seule fois, puis reste
+    instantanée sur les relances et rafraîchissements suivants.
+
+    _modeles_charges est préfixé par « _ » afin que Streamlit ne tente pas de
+    le hacher (les modèles PyTorch ne sont pas hachables) ; ce sont les noms
+    de modèles (signature_modeles) qui servent de clé de cache à leur place.
+
+    Le résultat (dictionnaires de trajectoires numpy + liste d'avertissements)
+    est sérialisable, donc compatible avec st.cache_data.
+    """
+    with torch.inference_mode():
+        return simuler_toutes_strategies(df, soc_eb0, soc_pb0, _modeles_charges)
+
+
 if st.button(
     "Lancer la simulation globale",
     type="primary",
@@ -416,13 +437,13 @@ if st.button(
         "Simulation des stratégies EMS en cours... "
         "Tous les modèles disponibles sont conservés."
     ):
-        with torch.inference_mode():
-            resultats, avertissements = simuler_toutes_strategies(
-                df,
-                soc_eb0,
-                soc_pb0,
-                modeles_charges,
-            )
+        resultats, avertissements = _simuler_en_cache(
+            df,
+            soc_eb0,
+            soc_pb0,
+            tuple(sorted(modeles_charges.keys())),
+            modeles_charges,
+        )
 
     duree = time.time() - debut
 
