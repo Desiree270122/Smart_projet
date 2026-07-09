@@ -2,7 +2,7 @@
 core/navigation.py — Pied de page de navigation cohérent pour toutes les pages.
 
 Au lieu de boutons ad hoc mal alignés en bas de chaque page, on affiche un
-pied uniforme : « ← page précédente » à gauche, « page suivante → » à droite,
+pied uniforme : « page précédente » à gauche, « page suivante » à droite,
 selon l'ordre logique de l'application.
 """
 
@@ -42,7 +42,7 @@ def pied_navigation(cible_courante: str):
         libelle_prec, cible_prec = ORDRE_PAGES[i - 1]
         with col_prec:
             if st.button(
-                f"← {libelle_prec}",
+                f"Précédent : {libelle_prec}",
                 use_container_width=True,
                 key="nav_precedent",
             ):
@@ -52,7 +52,7 @@ def pied_navigation(cible_courante: str):
         libelle_suiv, cible_suiv = ORDRE_PAGES[i + 1]
         with col_suiv:
             if st.button(
-                f"{libelle_suiv} →",
+                f"Suivant : {libelle_suiv}",
                 use_container_width=True,
                 type="primary",
                 key="nav_suivant",

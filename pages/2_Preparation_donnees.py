@@ -669,7 +669,7 @@ with st.expander("Récapitulatif des formules (dynamique du véhicule et packs b
 - Force totale : `F_totale = F_aero + F_roulement + F_gravite + F_acceleration`
 - Puissance demandée : `hasPower = F_totale * v`
 
-**Architecture des packs batteries** (bloc 7 → bloc 8) :
+**Architecture des packs batteries** (bloc 7 puis bloc 8) :
 
 - Tension : `Tension = V_cellule * n_serie`
 - Masse : `Masse = masse_cellule * n_serie * n_parallele`

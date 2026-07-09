@@ -220,7 +220,7 @@ try:
     )
     st.page_link(
         "pages/5_Comparaison_des_strategies.py",
-        label="→ Voir la comparaison complète",
+        label="Voir la comparaison complète",
     )
 
 except FileNotFoundError:

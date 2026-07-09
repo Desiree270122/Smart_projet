@@ -86,7 +86,7 @@ def supprimer_anciens_resultats():
 st.title("Simulation — cycle personnalisé")
 
 st.warning(
-    "⏱️ Cette page **relance une simulation complète** sur le cycle préparé. "
+    "Cette page **relance une simulation complète** sur le cycle préparé. "
     "C'est **long** (plusieurs minutes sur le serveur gratuit) car chaque stratégie "
     "est simulée pas à pas. Pour la démonstration et l'analyse habituelle, utilise "
     "plutôt les pages **Comparaison / Résultats / Explicabilité**, qui affichent "
@@ -441,7 +441,7 @@ def _simuler_en_cache(df, soc_eb0, soc_pb0, signature_modeles, pas_alpha, _model
 
 
 pas_alpha = st.select_slider(
-    "Précision de la grille alpha (vitesse ⇄ précision)",
+    "Précision de la grille alpha (vitesse / précision)",
     options=[0.001, 0.002, 0.005],
     value=0.005,
     format_func=lambda v: {
