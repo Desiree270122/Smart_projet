@@ -1,4 +1,4 @@
-# 2SMART — Gestion neurosymbolique de l'énergie pour un HESS
+# 2SMART — Semi-Supervised MAnagement of dual batteRy elecTric vehicles
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![Streamlit](https://img.shields.io/badge/Streamlit-app-FF4B4B)
@@ -7,7 +7,7 @@
 
 Application interactive de gestion d'énergie pour un système de stockage hybride (HESS) en véhicule électrique : répartition de la puissance entre une batterie d'énergie (EB) et une batterie de puissance (PB), comparaison de 7 stratégies EMS (déterministes, apprises, neurosymboliques), filtre de sécurité physique, explicabilité et export des résultats.
 
-Projet réalisé dans le cadre d'un stage de recherche — ICube (CNRS UMR 7357), INSA Strasbourg.
+Projet réalisé dans le cadre d'un stage de recherche .
 
 ---
 
