@@ -12,10 +12,7 @@ from core.resultats import (
 )
 
 
-st.set_page_config(
-    page_title="2SMART — Comparaison des stratégies",
-    layout="wide",
-)
+# Configuration de page gérée par le routeur Accueil.py.
 
 
 @st.cache_data(show_spinner="Chargement des résultats précalculés…")

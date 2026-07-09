@@ -26,10 +26,7 @@ from ems_core import (
 # Configuration de la page
 # ============================================================
 
-st.set_page_config(
-    page_title="2SMART — Simulation globale",
-    layout="wide",
-)
+# Configuration de page gérée par le routeur Accueil.py.
 
 try:
     torch.set_num_threads(max(1, (os.cpu_count() or 2) - 1))

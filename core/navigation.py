@@ -12,14 +12,14 @@ import streamlit as st
 # Ordre de navigation de l'application. Accueil.py est l'entrée (hors dossier
 # pages/) mais fait partie du parcours, donc inclus ici.
 ORDRE_PAGES = [
-    ("Accueil", "Accueil.py"),
-    ("Données & Prétraitement", "pages/2_Preparation_donnees.py"),
-    ("Ontologie OntoHESS", "pages/3_Ontologie_OntoHESS.py"),
-    ("Moteur Neuro-Symbolique", "pages/4_Moteur_Neurosymbolique.py"),
+    ("Accueil", "pages/1_Accueil.py"),
+    ("Préparation", "pages/2_Preparation_donnees.py"),
+    ("Nouvelle simulation", "pages/8_Simulation_cycle_personnalise.py"),
     ("Comparaison des stratégies", "pages/5_Comparaison_des_strategies.py"),
-    ("Résultats & Analyse", "pages/6_Resultats_et_Analyse.py"),
-    ("Explicabilité", "pages/7_Explicabilite.py"),
-    ("Simulation — cycle personnalisé", "pages/8_Simulation_cycle_personnalise.py"),
+    ("Analyse détaillée", "pages/6_Resultats_et_Analyse.py"),
+    ("Pourquoi cette décision ?", "pages/7_Explicabilite.py"),
+    ("Base de connaissances HESS", "pages/3_Ontologie_OntoHESS.py"),
+    ("Raisonnement neuro-symbolique", "pages/4_Moteur_Neurosymbolique.py"),
 ]
 
 

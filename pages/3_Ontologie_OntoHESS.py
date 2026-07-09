@@ -32,10 +32,7 @@ from core.resultats import assurer_donnees_session
 from core.navigation import pied_navigation
 
 
-st.set_page_config(
-    page_title="2SMART — Raisonnement du HESS",
-    layout="wide",
-)
+# Configuration de page gérée par le routeur Accueil.py.
 
 st.title("Raisonnement intelligent du système HESS")
 st.caption(
@@ -135,6 +132,8 @@ with etat_col1:
         st.markdown("**Batterie Énergie**")
         st.markdown(f"SOC : **{soc_eb * 100:.0f} %**")
         st.markdown(f"Puissance disponible : **{kw(cap['eb_dispo_max_W'])}**")
+        st.markdown(f"Puissance fournie : **{kw(p_eb)}**")
+        st.markdown(f"Puissance restante : **{kw(cap['eb_dispo_max_W'] - max(0.0, p_eb))}**")
         etat = "Disponible" if etats["EB_available"] else "Indisponible"
         if etats["EB_low_SOC"]:
             etat += " (presque vide)"
@@ -145,6 +144,8 @@ with etat_col2:
         st.markdown("**Batterie Puissance**")
         st.markdown(f"SOC : **{soc_pb * 100:.0f} %**")
         st.markdown(f"Puissance disponible : **{kw(cap['pb_dispo_max_W'])}**")
+        st.markdown(f"Puissance fournie : **{kw(p_pb)}**")
+        st.markdown(f"Puissance restante : **{kw(cap['pb_dispo_max_W'] - max(0.0, p_pb))}**")
         etat = "Disponible" if etats["PB_available"] else "Indisponible"
         if etats["PB_low_SOC"]:
             etat += " (presque vide)"

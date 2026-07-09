@@ -19,10 +19,7 @@ from ems_core import (
 )
 
 
-st.set_page_config(
-    page_title="Préparation des données",
-    layout="wide",
-)
+# Configuration de page gérée par le routeur Accueil.py.
 
 st.title("Préparation des données")
 
@@ -1137,72 +1134,6 @@ plt.close(
 
 st.session_state["soc_eb0"] = soc_eb0_apercu
 st.session_state["soc_pb0"] = soc_pb0_apercu
-
-st.divider()
-st.subheader("Analyse des capacités du HESS")
-
-st.write(
-    "Avant toute décision EMS, ce module évalue ce que chaque batterie peut "
-    "réellement fournir à un instant donné, selon son SOC et les contraintes "
-    "du convertisseur. La stratégie EMS ne choisit ensuite sa répartition que "
-    "parmi les solutions **physiquement réalisables** — c'est un filtre physique."
-)
-
-st.caption(
-    f"États et paramètres utilisés : **SOC_EB = {soc_eb0_apercu * 100:.0f} %**, "
-    f"**SOC_PB = {soc_pb0_apercu * 100:.0f} %** (réglés ci-dessus, section « SOC initial »), "
-    "ainsi que la configuration des batteries et du convertisseur définie plus haut "
-    "sur cette page. Modifie ces réglages pour voir leur effet sur les capacités."
-)
-
-_p_dem_kw = st.slider(
-    "Puissance demandée à analyser (kW)",
-    -50.0,
-    170.0,
-    20.0,
-    0.5,
-    help="Positif = traction ; négatif = freinage / récupération.",
-)
-
-_cap = core.analyser_capacites_hess(
-    _p_dem_kw * 1000.0,
-    soc_eb0_apercu,
-    soc_pb0_apercu,
-)
-
-cap_m1, cap_m2, cap_m3, cap_m4 = st.columns(4)
-cap_m1.metric("Demande", f"{_cap['p_dem_W'] / 1000.0:.1f} kW")
-cap_m2.metric("Dispo EB (traction)", f"{_cap['eb_dispo_max_W'] / 1000.0:.1f} kW")
-cap_m3.metric("Dispo PB (traction)", f"{_cap['pb_dispo_max_W'] / 1000.0:.1f} kW")
-cap_m4.metric("Dispo HESS total", f"{_cap['hess_dispo_max_W'] / 1000.0:.1f} kW")
-
-if _cap["p_dem_W"] >= 0:
-    if _cap["P_non_servie_W"] > 1.0:
-        st.error(
-            "Demande **NON satisfaisable** : la puissance disponible est "
-            f"insuffisante — puissance non servie de {_cap['P_non_servie_W'] / 1000.0:.1f} kW."
-        )
-    else:
-        st.success(
-            "Demande **satisfaisable**. Répartition minimale réalisable : "
-            f"EB **{_cap['P_EB_reparti_W'] / 1000.0:.2f} kW** / "
-            f"PB **{_cap['P_PB_reparti_W'] / 1000.0:.2f} kW** (alpha = {_cap['alpha']:.2f})."
-        )
-else:
-    st.info(
-        "Phase de freinage / récupération : "
-        f"EB absorbe {_cap['P_EB_reparti_W'] / 1000.0:.2f} kW, "
-        f"PB absorbe {_cap['P_PB_reparti_W'] / 1000.0:.2f} kW. "
-        f"Énergie non récupérée : {_cap['P_regen_rejetee_W'] / 1000.0:.2f} kW."
-    )
-
-st.caption(
-    "Capacités de traction (décharge) bornées par le SOC et le convertisseur. "
-    f"Limites du projet : EB max {core.P_EB_MAX_W / 1000.0:.1f} kW, "
-    f"PB max {core.P_PB_MAX_W / 1000.0:.1f} kW. Faisabilité et répartition "
-    "calculées par le solveur physique `resoudre_decision_physique`."
-)
-
 
 from core.navigation import pied_navigation
 

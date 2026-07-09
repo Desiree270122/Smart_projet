@@ -171,6 +171,43 @@ def calculer_metriques(donnees: dict) -> dict:
     return metriques
 
 
+def statistiques_detaillees(donnees: dict) -> dict:
+    """Statistiques physiques synthétiques par stratégie (pour la page
+    Résultats & Analyse) : plutôt que 14 000 points bruts, on résume chaque
+    série temporelle par des indicateurs lisibles par un physicien.
+
+    Retourne {cle_strategie: {indicateur: valeur, ...}}.
+    """
+    resultats = donnees["resultats"]
+    dt = core.DT_SECONDS
+
+    stats = {}
+    for nom, traj in resultats.items():
+        p_eb = np.asarray(traj["P_EB"], dtype=float)
+        p_pb = np.asarray(traj["P_PB"], dtype=float)
+        i_eb = np.asarray(traj["I_EB"], dtype=float)
+        i_pb = np.asarray(traj["I_PB"], dtype=float)
+        soc_eb = np.asarray(traj["SOC_EB"], dtype=float)
+        soc_pb = np.asarray(traj["SOC_PB"], dtype=float)
+
+        stats[nom] = {
+            "soc_eb_final": float(traj.get("SOC_EB_final", soc_eb[-1])),
+            "soc_pb_final": float(traj.get("SOC_PB_final", soc_pb[-1])),
+            # Énergie délivrée (décharge = puissance positive), en Wh.
+            "energie_eb_wh": float(np.sum(np.clip(p_eb, 0.0, None)) * dt / 3600.0),
+            "energie_pb_wh": float(np.sum(np.clip(p_pb, 0.0, None)) * dt / 3600.0),
+            "i_eb_rms": float(np.sqrt(np.mean(i_eb ** 2))),
+            "i_pb_rms": float(np.sqrt(np.mean(i_pb ** 2))),
+            "i_eb_max": float(np.max(np.abs(i_eb))),
+            "i_pb_max": float(np.max(np.abs(i_pb))),
+            "p_eb_max": float(np.max(np.abs(p_eb))),
+            "p_pb_max": float(np.max(np.abs(p_pb))),
+            "p_eb_moy": float(np.mean(np.abs(p_eb))),
+            "p_pb_moy": float(np.mean(np.abs(p_pb))),
+        }
+    return stats
+
+
 # Critères de sélection : libellé -> (métrique, sens). "min" = plus bas = mieux.
 CRITERES = {
     "Sécurité physique": ("nb_violations", "min"),

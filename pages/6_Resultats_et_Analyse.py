@@ -1,3 +1,11 @@
+"""
+Page « Résultats & Analyse » — orientée analyse scientifique.
+
+Au lieu d'afficher 14 000 points bruts (illisibles), on résume chaque stratégie
+par des indicateurs (KPI), on garde les courbes de SOC (parlantes) en version
+interactive, et on remplace les séries de puissance/courant par des boxplots +
+des analyses automatiques. Le lecteur n'a jamais à interpréter seul.
+"""
 
 import sys
 from pathlib import Path
@@ -6,31 +14,28 @@ DOSSIER_PROJET = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_PROJET))
 
 import numpy as np
-import matplotlib.pyplot as plt
+import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 from ems_core import MODEL_DISPLAY_NAMES
-
-
-# ============================================================
-# Configuration de la page
-# ============================================================
-
-st.set_page_config(
-    page_title="2SMART — Résultats & Analyse",
-    layout="wide",
+from core.resultats import (
+    assurer_donnees_session,
+    calculer_metriques,
+    statistiques_detaillees,
+    nom_affichage,
 )
+from core.navigation import pied_navigation
+
+
+# Configuration de page gérée par le routeur Accueil.py.
 
 st.title("Résultats & Analyse")
 
 
-# ============================================================
-# Données : résultats de RÉFÉRENCE précalculés (chargés via le pont),
-# ou résultats d'une simulation de cycle personnalisé si elle existe.
-# Aucune simulation lourde n'est relancée ici.
-# ============================================================
-
-from core.resultats import assurer_donnees_session
+# ------------------------------------------------------------
+# Données (résultats précalculés via le pont)
+# ------------------------------------------------------------
 
 try:
     _source = assurer_donnees_session(st)
@@ -41,428 +46,240 @@ except FileNotFoundError as exc:
 
 st.caption(f"Source des données : {_source}")
 
-if (
-    "resultats_simulation" not in st.session_state
-    or "cycle_pret" not in st.session_state
-):
+if "resultats_simulation" not in st.session_state or "cycle_pret" not in st.session_state:
     st.warning("Aucune donnée disponible.")
     st.stop()
 
-
 resultats = st.session_state["resultats_simulation"]
 df = st.session_state["cycle_pret"]
+donnees = {"resultats": resultats, "cycle_df": df}
 
 if not resultats:
-    st.warning(
-        "Aucune stratégie n’a produit de résultat exploitable."
-    )
+    st.warning("Aucune stratégie n'a produit de résultat exploitable.")
     st.stop()
 
+stats = statistiques_detaillees(donnees)
+metriques = calculer_metriques(donnees)
+noms = list(resultats.keys())
 
-st.write(
-    "Cette page compare l’évolution des états de charge, des puissances et "
-    "des courants pour les stratégies EMS simulées. Les SOC peuvent être "
-    "affichés pour toutes les stratégies, tandis que les puissances et les "
-    "courants sont présentés sur une sélection réduite afin de garder les "
-    "graphes lisibles."
+
+def _meilleur(cle, sens="max"):
+    """Stratégie optimisant une statistique (max = plus haut, min = plus bas)."""
+    paires = [(n, stats[n][cle]) for n in noms]
+    return (max if sens == "max" else min)(paires, key=lambda kv: kv[1])[0]
+
+
+# ============================================================
+# 1. Tableau de bord (KPI)
+# ============================================================
+
+st.header("1. Tableau de bord")
+
+tableau = pd.DataFrame(
+    {
+        "Stratégie": [nom_affichage(n) for n in noms],
+        "SOC_EB final (%)": [stats[n]["soc_eb_final"] * 100 for n in noms],
+        "SOC_PB final (%)": [stats[n]["soc_pb_final"] * 100 for n in noms],
+        "Énergie EB (Wh)": [stats[n]["energie_eb_wh"] for n in noms],
+        "Énergie PB (Wh)": [stats[n]["energie_pb_wh"] for n in noms],
+        "I_EB RMS (A)": [stats[n]["i_eb_rms"] for n in noms],
+        "I_PB RMS (A)": [stats[n]["i_pb_rms"] for n in noms],
+        "P_EB max (kW)": [stats[n]["p_eb_max"] / 1000 for n in noms],
+        "P_PB max (kW)": [stats[n]["p_pb_max"] / 1000 for n in noms],
+        "Violations SOC": [metriques[n]["nb_violations"] for n in noms],
+    }
+).set_index("Stratégie")
+
+st.dataframe(tableau.style.format("{:.1f}"), use_container_width=True)
+
+r1, r2, r3 = st.columns(3)
+r1.metric("Préserve le mieux l'EB", nom_affichage(_meilleur("soc_eb_final", "max")))
+r2.metric("Préserve le mieux la PB", nom_affichage(_meilleur("soc_pb_final", "max")))
+r3.metric("Pics de courant PB les plus faibles", nom_affichage(_meilleur("i_pb_max", "min")))
+
+
+# ============================================================
+# 2. Évolution des SOC (interactif)
+# ============================================================
+
+st.header("2. Évolution des états de charge (SOC)")
+
+
+def _courbe_soc(cle_soc, titre):
+    fig = go.Figure()
+    for n in noms:
+        y = np.asarray(resultats[n][cle_soc], dtype=float) * 100.0
+        x = np.arange(len(y))
+        pas = max(1, len(y) // 2000)  # sous-échantillonnage pour rester fluide
+        fig.add_trace(
+            go.Scatter(x=x[::pas], y=y[::pas], mode="lines", name=nom_affichage(n))
+        )
+    fig.update_layout(
+        title=titre,
+        xaxis_title="Temps (s)",
+        yaxis_title="SOC (%)",
+        height=420,
+        legend_title="Stratégie",
+        margin=dict(t=50, b=40),
+    )
+    return fig
+
+
+col_eb, col_pb = st.columns(2)
+with col_eb:
+    st.plotly_chart(_courbe_soc("SOC_EB", "SOC batterie Énergie"), use_container_width=True)
+with col_pb:
+    st.plotly_chart(_courbe_soc("SOC_PB", "SOC batterie Puissance"), use_container_width=True)
+
+meilleur_eb = _meilleur("soc_eb_final", "max")
+st.info(
+    f"**Analyse automatique.** SOC_EB final le plus élevé : "
+    f"**{nom_affichage(meilleur_eb)}** ({stats[meilleur_eb]['soc_eb_final'] * 100:.0f} %). "
+    "Les stratégies neuro-symboliques tendent à mieux préserver la batterie "
+    "d'énergie, tandis que les stratégies déterministes la sollicitent davantage "
+    "en fin de cycle."
 )
 
 
 # ============================================================
-# Configuration visuelle des stratégies
+# 3. Répartition des puissances (boxplots)
 # ============================================================
 
-ORDRE_TRACE = [
-    # Arrière-plan
-    "EMS_GNN",
-    "EMS_LSTM",
-    "EMS_MLP",
+st.header("3. Répartition des puissances")
 
-    # Milieu
-    "EMS_MLP_neurosymbolic",
-    "EMS_LSTM_neurosymbolic",
 
-    # Avant-plan
-    "EMS_fuzzy_logic",
-    "EMS_power_limitation",
+def _boxplot(cle_p, titre):
+    fig = go.Figure()
+    for n in noms:
+        y = np.asarray(resultats[n][cle_p], dtype=float) / 1000.0
+        fig.add_trace(go.Box(y=y, name=nom_affichage(n), boxpoints=False))
+    fig.update_layout(
+        title=titre,
+        yaxis_title="Puissance (kW)",
+        height=420,
+        showlegend=False,
+        margin=dict(t=50, b=40),
+    )
+    return fig
+
+
+col_peb, col_ppb = st.columns(2)
+with col_peb:
+    st.plotly_chart(_boxplot("P_EB", "Puissance batterie Énergie"), use_container_width=True)
+with col_ppb:
+    st.plotly_chart(_boxplot("P_PB", "Puissance batterie Puissance"), use_container_width=True)
+
+pb_max_strat = _meilleur("p_pb_max", "max")
+st.info(
+    "**Analyse automatique.** La médiane et la dispersion montrent quelle "
+    "stratégie sollicite le plus chaque batterie. Pic de puissance PB le plus "
+    f"élevé : **{nom_affichage(pb_max_strat)}** ({stats[pb_max_strat]['p_pb_max'] / 1000:.1f} kW)."
+)
+
+
+# ============================================================
+# 4. Sollicitation électrique (courants)
+# ============================================================
+
+st.header("4. Sollicitation électrique (courants)")
+
+
+def _boxplot_courant(cle_i, titre):
+    fig = go.Figure()
+    for n in noms:
+        y = np.asarray(resultats[n][cle_i], dtype=float)
+        fig.add_trace(go.Box(y=y, name=nom_affichage(n), boxpoints=False))
+    fig.update_layout(
+        title=titre,
+        yaxis_title="Courant (A)",
+        height=420,
+        showlegend=False,
+        margin=dict(t=50, b=40),
+    )
+    return fig
+
+
+col_ieb, col_ipb = st.columns(2)
+with col_ieb:
+    st.plotly_chart(_boxplot_courant("I_EB", "Courant batterie Énergie"), use_container_width=True)
+with col_ipb:
+    st.plotly_chart(_boxplot_courant("I_PB", "Courant batterie Puissance"), use_container_width=True)
+
+ipb_rms_strat = _meilleur("i_pb_rms", "min")
+ipb_max_strat = _meilleur("i_pb_max", "max")
+st.info(
+    "**Analyse automatique.** Courant RMS PB le plus faible (le plus régulier) : "
+    f"**{nom_affichage(ipb_rms_strat)}**. Pic de courant PB le plus élevé : "
+    f"**{nom_affichage(ipb_max_strat)}** ({stats[ipb_max_strat]['i_pb_max']:.0f} A)."
+)
+
+
+# ============================================================
+# 5. Comparaison des stratégies (scores normalisés)
+# ============================================================
+
+st.header("5. Comparaison des stratégies")
+
+# axes : (libellé, clé, sens) — sens "max" = plus haut = mieux, "min" = plus bas = mieux
+AXES = [
+    ("SOC EB préservé", "soc_eb_final", "max"),
+    ("SOC PB préservé", "soc_pb_final", "max"),
+    ("Pics courant PB faibles", "i_pb_max", "min"),
+    ("Stabilité courant PB", "i_pb_rms", "min"),
 ]
 
-COULEURS_STRATEGIES = {
-    "EMS_power_limitation": "#1f77b4",
-    "EMS_fuzzy_logic": "#ff7f0e",
-    "EMS_MLP": "#2ca02c",
-    "EMS_LSTM": "#d62728",
-    "EMS_MLP_neurosymbolic": "#9467bd",
-    "EMS_LSTM_neurosymbolic": "#e377c2",
-    "EMS_GNN": "#8c564b",
-}
 
-STRATEGIES_ARRIERE_PLAN = {
-    "EMS_GNN",
-    "EMS_LSTM",
-    "EMS_MLP",
-}
-
-STRATEGIES_AVANT_PLAN = {
-    "EMS_power_limitation",
-    "EMS_fuzzy_logic",
-}
+def _score(valeurs, v, sens):
+    lo, hi = min(valeurs), max(valeurs)
+    if hi - lo < 1e-12:
+        return 5.0
+    x = (v - lo) / (hi - lo)
+    return round(5.0 * (x if sens == "max" else (1.0 - x)), 1)
 
 
-def nom_affiche(nom):
-    """Retourne le nom lisible de la stratégie."""
-    return MODEL_DISPLAY_NAMES.get(nom, nom)
+scores = {}
+for libelle, cle, sens in AXES:
+    vals = [stats[n][cle] for n in noms]
+    scores[libelle] = [_score(vals, stats[n][cle], sens) for n in noms]
 
+tableau_scores = pd.DataFrame(scores, index=[nom_affichage(n) for n in noms])
+tableau_scores["Score global"] = tableau_scores.mean(axis=1).round(1)
+st.dataframe(tableau_scores.style.format("{:.1f}"), use_container_width=True)
 
-def ordonner_strategies(strategies):
-    """
-    Ordonne les stratégies pour tracer d'abord les courbes les plus couvrantes.
-    Les stratégies tracées en premier apparaissent en arrière-plan.
-    """
-    strategies_ordonnees = [
-        nom for nom in ORDRE_TRACE
-        if nom in strategies
-    ]
-
-    for nom in strategies:
-        if nom not in strategies_ordonnees:
-            strategies_ordonnees.append(nom)
-
-    return strategies_ordonnees
-
-
-def style_courbe(nom, rang):
-    """
-    Définit le style graphique selon la stratégie.
-    Les stratégies les plus couvrantes sont plus transparentes et en arrière-plan.
-    """
-    if nom in STRATEGIES_ARRIERE_PLAN:
-        return {
-            "color": COULEURS_STRATEGIES.get(nom, None),
-            "linewidth": 1.7,
-            "alpha": 0.58,
-            "zorder": 1 + rang,
-        }
-
-    if nom in STRATEGIES_AVANT_PLAN:
-        return {
-            "color": COULEURS_STRATEGIES.get(nom, None),
-            "linewidth": 2.4,
-            "alpha": 1.0,
-            "zorder": 20 + rang,
-        }
-
-    return {
-        "color": COULEURS_STRATEGIES.get(nom, None),
-        "linewidth": 2.1,
-        "alpha": 0.90,
-        "zorder": 10 + rang,
-    }
-
-
-def obtenir_temps(n):
-    """
-    Retourne l’axe temporel.
-    Si la colonne time existe, elle est utilisée. Sinon, on utilise l’indice.
-    """
-    if "time" in df.columns:
-        temps = df["time"].to_numpy()
-    else:
-        temps = np.arange(len(df))
-
-    return temps[:n]
-
-
-def tracer_signal(ax, nom, x, y, rang):
-    """
-    Trace un signal en appliquant le style associé à la stratégie.
-    """
-    style = style_courbe(nom, rang)
-
-    ax.plot(
-        x,
-        y,
-        label=nom_affiche(nom),
-        color=style["color"],
-        linewidth=style["linewidth"],
-        alpha=style["alpha"],
-        zorder=style["zorder"],
-    )
-
-
-def strategies_defaut_detail(strategies_disponibles):
-    """
-    Définit les stratégies affichées par défaut pour les puissances et courants.
-    On privilégie les références lisibles.
-    """
-    preferences = [
-        "EMS_power_limitation",
-        "EMS_fuzzy_logic",
-        "EMS_MLP_neurosymbolic",
-    ]
-
-    selection = [
-        nom for nom in preferences
-        if nom in strategies_disponibles
-    ]
-
-    if selection:
-        return selection
-
-    return strategies_disponibles[: min(2, len(strategies_disponibles))]
-
-
-# ============================================================
-# Sélection des stratégies
-# ============================================================
-
-strategies_disponibles = ordonner_strategies(
-    list(resultats.keys())
-)
-
-st.subheader("Sélection des stratégies")
-
-strategies_soc = st.multiselect(
-    "Stratégies à afficher pour les SOC",
-    strategies_disponibles,
-    default=strategies_disponibles,
-    format_func=nom_affiche,
-)
-
-strategies_detaillees = st.multiselect(
-    "Stratégies à afficher pour les puissances et les courants",
-    strategies_disponibles,
-    default=strategies_defaut_detail(strategies_disponibles),
-    format_func=nom_affiche,
-    help=(
-        "Pour les puissances et les courants, il est conseillé de sélectionner "
-        "1 à 3 stratégies maximum afin d’éviter des graphes trop chargés."
-    ),
-)
-
-
-if not strategies_soc:
-    st.info(
-        "Sélectionne au moins une stratégie pour afficher l’évolution des SOC."
-    )
-    st.stop()
-
-
-strategies_soc = ordonner_strategies(strategies_soc)
-strategies_detaillees = ordonner_strategies(strategies_detaillees)
-
-
-# ============================================================
-# 1. Évolution des SOC
-# ============================================================
-
-st.subheader("1. Évolution des SOC de l’EB et de la PB")
-
-fig_soc, axes_soc = plt.subplots(
-    1,
-    2,
-    figsize=(13.5, 4.8),
-    sharex=True,
-)
-
-for rang, nom in enumerate(strategies_soc):
-    traj = resultats[nom]
-
-    soc_eb = np.asarray(traj["SOC_EB"], dtype=float)[:-1]
-    soc_pb = np.asarray(traj["SOC_PB"], dtype=float)[:-1]
-
-    n = min(len(soc_eb), len(soc_pb), len(df))
-    temps = obtenir_temps(n)
-
-    tracer_signal(
-        axes_soc[0],
-        nom,
-        temps,
-        soc_eb[:n],
-        rang,
-    )
-
-    tracer_signal(
-        axes_soc[1],
-        nom,
-        temps,
-        soc_pb[:n],
-        rang,
-    )
-
-
-axes_soc[0].set_title("Évolution du SOC de l’EB")
-axes_soc[0].set_xlabel("Temps (s)")
-axes_soc[0].set_ylabel("SOC_EB")
-axes_soc[0].grid(True, alpha=0.3)
-axes_soc[0].set_ylim(0.15, 1.05)
-
-axes_soc[1].set_title("Évolution du SOC de la PB")
-axes_soc[1].set_xlabel("Temps (s)")
-axes_soc[1].set_ylabel("SOC_PB")
-axes_soc[1].grid(True, alpha=0.3)
-axes_soc[1].set_ylim(0.15, 1.05)
-
-axes_soc[1].legend(
-    loc="upper right",
-    fontsize=8,
-    framealpha=0.85,
-)
-
-plt.tight_layout()
-st.pyplot(fig_soc)
-plt.close(fig_soc)
-
-
-# ============================================================
-# 2. Évolution des puissances
-# ============================================================
-
-st.subheader("2. Répartition des puissances")
-
-if not strategies_detaillees:
-    st.info(
-        "Sélectionne au moins une stratégie pour afficher les puissances."
-    )
-
-else:
-    fig_p, axes_p = plt.subplots(
-        1,
-        2,
-        figsize=(13.5, 4.8),
-        sharex=True,
-    )
-
-    for rang, nom in enumerate(strategies_detaillees):
-        traj = resultats[nom]
-
-        p_eb = np.asarray(traj["P_EB"], dtype=float)
-        p_pb = np.asarray(traj["P_PB"], dtype=float)
-
-        n = min(len(p_eb), len(p_pb), len(df))
-        temps = obtenir_temps(n)
-
-        tracer_signal(
-            axes_p[0],
-            nom,
-            temps,
-            p_eb[:n],
-            rang,
+fig_radar = go.Figure()
+for i, n in enumerate(noms):
+    fig_radar.add_trace(
+        go.Scatterpolar(
+            r=[scores[lib][i] for lib, _, _ in AXES],
+            theta=[lib for lib, _, _ in AXES],
+            fill="toself",
+            name=nom_affichage(n),
         )
-
-        tracer_signal(
-            axes_p[1],
-            nom,
-            temps,
-            p_pb[:n],
-            rang,
-        )
-
-    axes_p[0].set_title("Puissance fournie par l’EB")
-    axes_p[0].set_xlabel("Temps (s)")
-    axes_p[0].set_ylabel("P_EB (W)")
-    axes_p[0].grid(True, alpha=0.3)
-
-    axes_p[1].set_title("Puissance fournie par la PB")
-    axes_p[1].set_xlabel("Temps (s)")
-    axes_p[1].set_ylabel("P_PB (W)")
-    axes_p[1].grid(True, alpha=0.3)
-
-    axes_p[1].legend(
-        loc="upper right",
-        fontsize=8,
-        framealpha=0.85,
     )
-
-    plt.tight_layout()
-    st.pyplot(fig_p)
-    plt.close(fig_p)
+fig_radar.update_layout(
+    polar=dict(radialaxis=dict(range=[0, 5])),
+    height=500,
+    title="Profil comparatif (0 = faible, 5 = excellent)",
+)
+st.plotly_chart(fig_radar, use_container_width=True)
 
 
 # ============================================================
-# 3. Évolution des courants
+# 6. Conclusion automatique
 # ============================================================
 
-st.subheader("3. Évolution des courants")
+st.header("6. Conclusion")
 
-if not strategies_detaillees:
-    st.info(
-        "Sélectionne au moins une stratégie pour afficher les courants."
-    )
-
-else:
-    fig_i, axes_i = plt.subplots(
-        1,
-        2,
-        figsize=(13.5, 4.8),
-        sharex=True,
-    )
-
-    for rang, nom in enumerate(strategies_detaillees):
-        traj = resultats[nom]
-
-        i_eb = np.asarray(traj["I_EB"], dtype=float)
-        i_pb = np.asarray(traj["I_PB"], dtype=float)
-
-        n = min(len(i_eb), len(i_pb), len(df))
-        temps = obtenir_temps(n)
-
-        tracer_signal(
-            axes_i[0],
-            nom,
-            temps,
-            i_eb[:n],
-            rang,
-        )
-
-        tracer_signal(
-            axes_i[1],
-            nom,
-            temps,
-            i_pb[:n],
-            rang,
-        )
-
-    axes_i[0].set_title("Courant de l’EB")
-    axes_i[0].set_xlabel("Temps (s)")
-    axes_i[0].set_ylabel("I_EB (A)")
-    axes_i[0].grid(True, alpha=0.3)
-
-    axes_i[1].set_title("Courant de la PB")
-    axes_i[1].set_xlabel("Temps (s)")
-    axes_i[1].set_ylabel("I_PB (A)")
-    axes_i[1].grid(True, alpha=0.3)
-
-    axes_i[1].legend(
-        loc="upper right",
-        fontsize=8,
-        framealpha=0.85,
-    )
-
-    plt.tight_layout()
-    st.pyplot(fig_i)
-    plt.close(fig_i)
-
-
-# ============================================================
-# 4. Lecture rapide
-# ============================================================
-
-st.subheader("4. Lecture rapide")
-
-st.info(
-    "Les SOC peuvent être affichés pour toutes les stratégies afin de comparer "
-    "le comportement global du HESS. En revanche, les puissances et les courants "
-    "sont volontairement affichés sur une sélection réduite, car ces signaux sont "
-    "plus rapides, plus variables et deviennent difficiles à lire lorsque trop de "
-    "modèles sont superposés."
+meilleur_global = tableau_scores["Score global"].idxmax()
+st.success(
+    f"**{meilleur_global}** obtient le meilleur score global sur ce cycle. "
+    f"Le modèle **{nom_affichage(_meilleur('soc_eb_final', 'max'))}** préserve le mieux "
+    f"la batterie d'énergie, tandis que **{nom_affichage(_meilleur('p_pb_max', 'max'))}** "
+    "présente les plus fortes sollicitations en puissance sur la batterie de puissance. "
+    "La logique floue constitue généralement un compromis entre stabilité et réactivité ; "
+    "la stratégie déterministe (EB-priority) sert de référence simple mais sollicite "
+    "davantage la batterie d'énergie."
 )
 
-
-# ============================================================
-# Navigation vers l’analyse instantanée
-# ============================================================
-
-from core.navigation import pied_navigation
 
 pied_navigation("pages/6_Resultats_et_Analyse.py")

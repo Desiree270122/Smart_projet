@@ -12,10 +12,7 @@ import streamlit as st
 from ems_core import MODEL_DISPLAY_NAMES
 
 
-st.set_page_config(
-    page_title="2SMART — Moteur Neuro-Symbolique",
-    layout="wide",
-)
+# Configuration de page gérée par le routeur Accueil.py.
 
 st.title("Moteur Neuro-Symbolique — analyse à l'instant t")
 
