@@ -10,3 +10,5 @@ plotly>=5.15
 rdflib>=6.3
 networkx>=3.0
 joblib>=1.2
+
+xlsxwriter>=3.1
