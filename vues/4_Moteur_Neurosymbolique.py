@@ -5,7 +5,7 @@ from pathlib import Path
 DOSSIER_PROJET = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_PROJET))
 
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 import pandas as pd
 import streamlit as st
 
@@ -85,33 +85,47 @@ st.write(
 st.subheader("Puissance demandée sur le cycle")
 
 st.caption(
-    "La valeur affichée ci-dessus est celle de l'instant sélectionné (repère "
-    "rouge) -- elle change avec le curseur. Ce graphique montre comment la "
-    "puissance demandée évolue sur l'ensemble du cycle, pour situer cet "
-    "instant dans son contexte."
+    "Déplace le curseur ci-dessus pour changer l'instant (repère rouge). "
+    "Survole la courbe pour lire la puissance demandée à n'importe quel point, "
+    "y compris sur les pics ; tu peux aussi zoomer."
 )
 
-fig_puissance, ax_puissance = plt.subplots(figsize=(11, 3.5))
-ax_puissance.plot(
-    df["time"].to_numpy()[:nombre_points_max],
-    df["hasPower"].to_numpy()[:nombre_points_max] / 1000.0,
-    color="#5B8DEF", linewidth=1,
+_t = df["time"].to_numpy()[:nombre_points_max]
+_p = df["hasPower"].to_numpy()[:nombre_points_max] / 1000.0
+_t_sel = float(ligne["time"])
+_p_sel = float(ligne["hasPower"]) / 1000.0
+
+fig_puissance = go.Figure()
+fig_puissance.add_trace(
+    go.Scatter(
+        x=_t,
+        y=_p,
+        mode="lines",
+        line=dict(color="#5B8DEF", width=1),
+        name="Puissance demandée",
+        hovertemplate="Temps : %{x:.0f} s<br>Puissance : %{y:.2f} kW<extra></extra>",
+    )
 )
-ax_puissance.axvline(
-    float(ligne["time"]), color="#E5484D", linestyle="--", linewidth=1.5,
-    label=f"Instant sélectionné ({float(ligne['time']):.0f} s)",
+fig_puissance.add_trace(
+    go.Scatter(
+        x=[_t_sel],
+        y=[_p_sel],
+        mode="markers",
+        marker=dict(color="#E5484D", size=11),
+        name=f"Instant sélectionné ({_t_sel:.0f} s)",
+        hovertemplate="Instant sélectionné<br>Temps : %{x:.0f} s<br>Puissance : %{y:.2f} kW<extra></extra>",
+    )
 )
-ax_puissance.scatter(
-    [float(ligne["time"])], [float(ligne["hasPower"]) / 1000.0],
-    color="#E5484D", zorder=5, s=40,
+fig_puissance.add_vline(x=_t_sel, line=dict(color="#E5484D", dash="dash", width=1.5))
+fig_puissance.update_layout(
+    xaxis_title="Temps (s)",
+    yaxis_title="Puissance demandée (kW)",
+    height=380,
+    hovermode="closest",
+    margin=dict(t=30, b=40),
+    legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="right", x=1.0),
 )
-ax_puissance.set_xlabel("Temps (s)")
-ax_puissance.set_ylabel("Puissance demandée (kW)")
-ax_puissance.legend(loc="upper right", fontsize=8)
-ax_puissance.grid(True, alpha=0.3)
-plt.tight_layout()
-st.pyplot(fig_puissance)
-plt.close(fig_puissance)
+st.plotly_chart(fig_puissance, use_container_width=True)
 
 
 # ============================================================

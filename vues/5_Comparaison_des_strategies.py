@@ -86,6 +86,31 @@ else:
 
 
 # ------------------------------------------------------------
+# Meilleure stratégie pour CHAQUE critère (vue d'ensemble)
+# ------------------------------------------------------------
+
+st.markdown("**Meilleure stratégie par critère**")
+
+lignes_critere = []
+for crit in CRITERES:
+    cle_c, val_c = meilleure_strategie(metriques, crit)
+    metrique_c, _sens_c = CRITERES[crit]
+    fmt_c = COLONNES.get(metrique_c, (crit, "{:.4f}"))[1]
+    lignes_critere.append(
+        {
+            "Critère": crit,
+            "Meilleure stratégie": nom_affichage(cle_c) if cle_c else "—",
+            "Valeur": fmt_c.format(val_c) if cle_c and val_c == val_c else "—",
+        }
+    )
+
+st.dataframe(
+    pd.DataFrame(lignes_critere).set_index("Critère"),
+    use_container_width=True,
+)
+
+
+# ------------------------------------------------------------
 # Tableau de classement (trié selon le critère)
 # ------------------------------------------------------------
 
