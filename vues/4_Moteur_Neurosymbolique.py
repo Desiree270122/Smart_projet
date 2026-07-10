@@ -5,6 +5,7 @@ from pathlib import Path
 DOSSIER_PROJET = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_PROJET))
 
+import numpy as np
 import plotly.graph_objects as go
 import pandas as pd
 import streamlit as st
@@ -68,6 +69,12 @@ instant_choisi = st.slider(
     nombre_points_max // 2,
 )
 
+strategie_graphe = st.selectbox(
+    "Stratégie de référence pour le graphe (P_EB, P_PB, alpha affichés au survol)",
+    list(resultats.keys()),
+    format_func=lambda n: n,
+)
+
 
 ligne = df.iloc[instant_choisi]
 
@@ -86,14 +93,24 @@ st.subheader("Puissance demandée sur le cycle")
 
 st.caption(
     "Déplace le curseur ci-dessus pour changer l'instant (repère rouge). "
-    "Survole la courbe pour lire la puissance demandée à n'importe quel point, "
-    "y compris sur les pics ; tu peux aussi zoomer."
+    "Survole la courbe pour lire, à n'importe quel point (y compris les pics) : "
+    "P_dem, ainsi que P_EB, P_PB et alpha de la stratégie choisie. Zoom possible."
 )
 
 _t = df["time"].to_numpy()[:nombre_points_max]
 _p = df["hasPower"].to_numpy()[:nombre_points_max] / 1000.0
 _t_sel = float(ligne["time"])
 _p_sel = float(ligne["hasPower"]) / 1000.0
+
+# Données de la stratégie choisie, pour enrichir le survol (P_EB, P_PB, alpha).
+_traj_g = resultats[strategie_graphe]
+_custom = np.column_stack(
+    [
+        np.asarray(_traj_g["P_EB"], dtype=float)[:nombre_points_max] / 1000.0,
+        np.asarray(_traj_g["P_PB"], dtype=float)[:nombre_points_max] / 1000.0,
+        np.asarray(_traj_g["alpha_final"], dtype=float)[:nombre_points_max],
+    ]
+)
 
 fig_puissance = go.Figure()
 fig_puissance.add_trace(
@@ -103,7 +120,13 @@ fig_puissance.add_trace(
         mode="lines",
         line=dict(color="#5B8DEF", width=1),
         name="Puissance demandée",
-        hovertemplate="Temps : %{x:.0f} s<br>Puissance : %{y:.2f} kW<extra></extra>",
+        customdata=_custom,
+        hovertemplate=(
+            "Temps : %{x:.0f} s<br>P_dem : %{y:.2f} kW<br>"
+            "P_EB : %{customdata[0]:.2f} kW<br>"
+            "P_PB : %{customdata[1]:.2f} kW<br>"
+            "alpha : %{customdata[2]:.2f}<extra></extra>"
+        ),
     )
 )
 fig_puissance.add_trace(

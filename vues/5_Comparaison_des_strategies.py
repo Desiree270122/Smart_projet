@@ -43,6 +43,47 @@ st.caption(
 
 
 # ------------------------------------------------------------
+# Classement général (moyenne des scores normalisés sur tous les critères)
+# ------------------------------------------------------------
+
+def _scores_globaux(metriques):
+    """Score 0-1 par stratégie : moyenne des scores normalisés sur les critères
+    (1 = meilleur). Permet un classement synthétique."""
+    scores = {n: [] for n in metriques}
+    for _crit, (metrique, sens_c) in CRITERES.items():
+        vals = {n: m.get(metrique, float("nan")) for n, m in metriques.items()}
+        finis = [v for v in vals.values() if v == v]
+        if not finis:
+            continue
+        lo, hi = min(finis), max(finis)
+        for n, v in vals.items():
+            if v != v:
+                continue
+            x = 0.5 if hi - lo < 1e-12 else (v - lo) / (hi - lo)
+            scores[n].append(x if sens_c == "max" else 1.0 - x)
+    return {n: (sum(s) / len(s) if s else 0.0) for n, s in scores.items()}
+
+
+classement = sorted(_scores_globaux(metriques).items(), key=lambda kv: kv[1], reverse=True)
+
+st.subheader("Classement général")
+
+col_cl, col_hi = st.columns(2)
+with col_cl:
+    for rang, (nom_s, sc) in enumerate(classement, start=1):
+        st.markdown(f"{rang}. **{nom_affichage(nom_s)}**  ({sc * 100:.0f} %)")
+with col_hi:
+    st.markdown(
+        f"- Meilleur coût : **{nom_affichage(meilleure_strategie(metriques, 'Coût énergétique')[0])}**\n"
+        f"- Meilleure sécurité : **{nom_affichage(meilleure_strategie(metriques, 'Sécurité physique')[0])}**\n"
+        f"- Meilleur équilibre SOC : **{nom_affichage(meilleure_strategie(metriques, 'Équilibre EB/PB')[0])}**\n"
+        f"- Meilleure explicabilité : **{nom_affichage(meilleure_strategie(metriques, 'Explicabilité')[0])}**"
+    )
+
+st.divider()
+
+
+# ------------------------------------------------------------
 # Colonnes affichées + sens de tri
 # ------------------------------------------------------------
 
@@ -91,6 +132,16 @@ else:
 
 st.markdown("**Meilleure stratégie par critère**")
 
+POURQUOI = {
+    "Sécurité physique": "le moins de violations SOC",
+    "Coût énergétique": "coût physique minimal",
+    "Préservation EB": "SOC final EB le plus élevé",
+    "Préservation PB": "SOC final PB le plus élevé",
+    "Équilibre EB/PB": "déséquilibre SOC le plus faible",
+    "Performance globale": "coût physique minimal",
+    "Explicabilité": "le moins de corrections du filtre",
+}
+
 lignes_critere = []
 for crit in CRITERES:
     cle_c, val_c = meilleure_strategie(metriques, crit)
@@ -101,6 +152,7 @@ for crit in CRITERES:
             "Critère": crit,
             "Meilleure stratégie": nom_affichage(cle_c) if cle_c else "—",
             "Valeur": fmt_c.format(val_c) if cle_c and val_c == val_c else "—",
+            "Pourquoi": POURQUOI.get(crit, ""),
         }
     )
 
