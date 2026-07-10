@@ -23,9 +23,9 @@ from ems_core import (
     analyser_capacites_hess,
     compute_symbolic_states,
     alpha_fuzzy_calc,
+    resoudre_decision_physique,
     FUZZY_RULE_NAMES,
     RULE_LABELS_FR,
-    MODEL_DISPLAY_NAMES,
     EPS_POWER_W,
 )
 from core.resultats import assurer_donnees_session
@@ -83,15 +83,55 @@ traj = resultats[strategie]
 t_sel = float(df["time"].iloc[instant]) if "time" in df.columns else float(instant)
 vitesse_ms = float(df["speed"].iloc[instant]) if "speed" in df.columns else None
 accel = float(df["hasAcceleration"].iloc[instant]) if "hasAcceleration" in df.columns else 0.0
-p_dem = float(df["hasPower"].iloc[instant])
 soc_eb = float(traj["SOC_EB"][instant])
 soc_pb = float(traj["SOC_PB"][instant])
-p_eb = float(traj["P_EB"][instant])
-p_pb = float(traj["P_PB"][instant])
-correction = bool(traj["correction_applied"][instant]) if "correction_applied" in traj else False
+p_dem_cycle = float(df["hasPower"].iloc[instant])
+
+# Mode « What-if » : on peut remplacer manuellement la puissance demandée, tout
+# en gardant l'état réel de l'instant (SOC, vitesse, accélération...).
+utiliser_cycle = st.checkbox("Utiliser la puissance du cycle", value=True)
+if utiliser_cycle:
+    p_dem = p_dem_cycle
+else:
+    p_dem = (
+        st.number_input(
+            "Puissance demandée (kW)",
+            value=round(p_dem_cycle / 1000.0, 2),
+            step=1.0,
+            format="%.2f",
+        )
+        * 1000.0
+    )
+mode_whatif = not utiliser_cycle
 
 cap = analyser_capacites_hess(p_dem, soc_eb, soc_pb)
 etats = compute_symbolic_states(p_dem, soc_eb, soc_pb)
+
+if utiliser_cycle:
+    # Décision réellement prise par la stratégie choisie (précalculée).
+    p_eb = float(traj["P_EB"][instant])
+    p_pb = float(traj["P_PB"][instant])
+    correction = (
+        bool(traj["correction_applied"][instant])
+        if "correction_applied" in traj
+        else False
+    )
+else:
+    # What-if : la répartition précalculée ne correspond plus à cette puissance.
+    # On recalcule une décision physiquement réalisable à partir de la
+    # proposition des règles floues (approche interprétable de cette page).
+    alpha_fuzzy = float(
+        alpha_fuzzy_calc(
+            np.array([soc_eb]),
+            np.array([soc_pb]),
+            np.array([p_dem]),
+            np.array([accel]),
+        )["alpha"][0]
+    )
+    decision_wi = resoudre_decision_physique(alpha_fuzzy, p_dem, soc_eb, soc_pb)
+    p_eb = float(decision_wi["P_EB_final"])
+    p_pb = float(decision_wi["P_PB_final"])
+    correction = bool(decision_wi["correction_applied"])
 
 
 def kw(x):
@@ -112,10 +152,24 @@ else:
 
 st.header("1. Situation actuelle")
 
+if mode_whatif:
+    st.warning(
+        f"**Mode d'analyse : What-if** — puissance modifiée manuellement "
+        f"(**{kw(p_dem)}** au lieu de {kw(p_dem_cycle)} du cycle). Les autres "
+        "variables (SOC, vitesse, accélération) restent celles de cet instant ; "
+        "la décision est recalculée par le filtre physique."
+    )
+else:
+    st.caption("Mode d'analyse : Référence — puissance issue du cycle.")
+
 s1, s2, s3, s4 = st.columns(4)
 s1.metric("Temps", f"{t_sel:.0f} s")
 s2.metric("Vitesse", f"{vitesse_ms * 3.6:.0f} km/h" if vitesse_ms is not None else "n/a")
-s3.metric("Puissance demandée", kw(p_dem))
+s3.metric(
+    "Puissance demandée",
+    kw(p_dem),
+    "modifiée" if mode_whatif else None,
+)
 s4.metric("Mode de fonctionnement", regime)
 
 
@@ -293,6 +347,13 @@ else:
 # ============================================================
 
 st.header("5. Décision finale")
+
+if mode_whatif:
+    st.caption(
+        "Mode What-if : la répartition ci-dessous est **recalculée** par le filtre "
+        "physique à partir de la proposition des règles floues (la décision "
+        "précalculée de la stratégie ne correspond plus à la puissance modifiée)."
+    )
 
 total_mag = abs(p_eb) + abs(p_pb)
 part_eb = 100.0 * abs(p_eb) / total_mag if total_mag > 1.0 else 0.0
