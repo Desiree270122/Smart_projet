@@ -134,9 +134,9 @@ with etat_col1:
         st.markdown(f"Puissance disponible : **{kw(cap['eb_dispo_max_W'])}**")
         st.markdown(f"Puissance fournie : **{kw(p_eb)}**")
         st.markdown(f"Puissance restante : **{kw(cap['eb_dispo_max_W'] - max(0.0, p_eb))}**")
-        etat = "Disponible" if etats["EB_available"] else "Indisponible"
+        etat = "Disponible" if cap["eb_dispo_max_W"] > 1.0 else "Indisponible"
         if etats["EB_low_SOC"]:
-            etat += " (presque vide)"
+            etat += " (SOC au minimum)" if cap["eb_dispo_max_W"] <= 1.0 else " (presque vide)"
         st.markdown(f"État : {etat}")
 
 with etat_col2:
@@ -146,9 +146,9 @@ with etat_col2:
         st.markdown(f"Puissance disponible : **{kw(cap['pb_dispo_max_W'])}**")
         st.markdown(f"Puissance fournie : **{kw(p_pb)}**")
         st.markdown(f"Puissance restante : **{kw(cap['pb_dispo_max_W'] - max(0.0, p_pb))}**")
-        etat = "Disponible" if etats["PB_available"] else "Indisponible"
+        etat = "Disponible" if cap["pb_dispo_max_W"] > 1.0 else "Indisponible"
         if etats["PB_low_SOC"]:
-            etat += " (presque vide)"
+            etat += " (SOC au minimum)" if cap["pb_dispo_max_W"] <= 1.0 else " (presque vide)"
         st.markdown(f"État : {etat}")
 
 with etat_col3:
@@ -197,6 +197,15 @@ if p_dem > EPS_POWER_W:
         st.success(f"Le système conclut : {conclusion}")
     else:
         st.error(f"Le système conclut : {conclusion}")
+        st.info(
+            "**Réaction du système** : aucune répartition ne permet de couvrir la "
+            "demande en respectant les limites physiques (SOC minimal des batteries, "
+            "convertisseur). Les batteries fournissent le maximum autorisé et "
+            f"**{kw(cap['P_non_servie_W'])} restent non servis**. Le filtre de sécurité "
+            "protège les batteries contre la décharge profonde, au détriment de la "
+            "performance : en pratique, la propulsion du véhicule serait limitée à cet "
+            "instant (le conducteur n'obtient pas toute la puissance demandée)."
+        )
 elif p_dem < -EPS_POWER_W:
     st.info(
         "Phase de freinage : l'énergie récupérée est absorbée par les batteries "
