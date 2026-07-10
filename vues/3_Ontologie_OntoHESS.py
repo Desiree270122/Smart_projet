@@ -18,18 +18,34 @@ sys.path.insert(0, str(DOSSIER_PROJET))
 
 import numpy as np
 import streamlit as st
+import torch
 
 from ems_core import (
     analyser_capacites_hess,
     compute_symbolic_states,
     alpha_fuzzy_calc,
     resoudre_decision_physique,
+    appliquer_scaler,
+    charger_scaler,
+    load_mlp_simple,
+    MLP_INPUT_COLS,
+    MLP_SCALER_FILE,
+    DEVICE,
     FUZZY_RULE_NAMES,
     RULE_LABELS_FR,
     EPS_POWER_W,
 )
 from core.resultats import assurer_donnees_session
 from core.navigation import pied_navigation
+
+
+@st.cache_resource(show_spinner=False)
+def _charger_mlp_pour_whatif():
+    """Charge le MLP (et son scaler) pour recalculer sa vraie décision en mode
+    What-if. Mis en cache : chargé une seule fois."""
+    modele = load_mlp_simple()
+    modele.eval()
+    return modele, charger_scaler(MLP_SCALER_FILE)
 
 
 # Configuration de page gérée par le routeur Accueil.py.
@@ -117,18 +133,38 @@ if utiliser_cycle:
         else False
     )
 else:
-    # What-if : la répartition précalculée ne correspond plus à cette puissance.
-    # On recalcule une décision physiquement réalisable à partir de la
-    # proposition des règles floues (approche interprétable de cette page).
-    alpha_fuzzy = float(
-        alpha_fuzzy_calc(
-            np.array([soc_eb]),
-            np.array([soc_pb]),
-            np.array([p_dem]),
-            np.array([accel]),
-        )["alpha"][0]
-    )
-    decision_wi = resoudre_decision_physique(alpha_fuzzy, p_dem, soc_eb, soc_pb)
+    # What-if : la répartition précalculée ne correspond plus à cette puissance,
+    # on recalcule la décision réellement cohérente avec la puissance modifiée.
+    if strategie == "EMS_MLP":
+        # Vraie décision du modèle MLP, recalculée pour la puissance modifiée.
+        modele_mlp, scaler_mlp = _charger_mlp_pour_whatif()
+        vals_mlp = {
+            "SOC_EB": soc_eb,
+            "SOC_PB": soc_pb,
+            "hasPower": p_dem,
+            "speed": float(df["speed"].iloc[instant]) if "speed" in df.columns else 0.0,
+            "hasAcceleration": accel,
+        }
+        brut_mlp = np.array([vals_mlp[col] for col in MLP_INPUT_COLS], dtype=np.float64)
+        if scaler_mlp is not None:
+            brut_mlp = appliquer_scaler(brut_mlp, scaler_mlp)
+        x_mlp = torch.tensor([brut_mlp.tolist()], dtype=torch.float32, device=DEVICE)
+        with torch.no_grad():
+            alpha_req = float(modele_mlp(x_mlp).item())
+        source_decision_wi = "modèle MLP"
+    else:
+        # Autres stratégies : proposition des règles floues (interprétable).
+        alpha_req = float(
+            alpha_fuzzy_calc(
+                np.array([soc_eb]),
+                np.array([soc_pb]),
+                np.array([p_dem]),
+                np.array([accel]),
+            )["alpha"][0]
+        )
+        source_decision_wi = "règles floues"
+
+    decision_wi = resoudre_decision_physique(alpha_req, p_dem, soc_eb, soc_pb)
     p_eb = float(decision_wi["P_EB_final"])
     p_pb = float(decision_wi["P_PB_final"])
     correction = bool(decision_wi["correction_applied"])
@@ -157,7 +193,7 @@ if mode_whatif:
         f"**Mode d'analyse : What-if** — puissance modifiée manuellement "
         f"(**{kw(p_dem)}** au lieu de {kw(p_dem_cycle)} du cycle). Les autres "
         "variables (SOC, vitesse, accélération) restent celles de cet instant ; "
-        "la décision est recalculée par le filtre physique."
+        f"la décision est recalculée ({source_decision_wi} + filtre physique de sécurité)."
     )
 else:
     st.caption("Mode d'analyse : Référence — puissance issue du cycle.")
@@ -350,9 +386,9 @@ st.header("5. Décision finale")
 
 if mode_whatif:
     st.caption(
-        "Mode What-if : la répartition ci-dessous est **recalculée** par le filtre "
-        "physique à partir de la proposition des règles floues (la décision "
-        "précalculée de la stratégie ne correspond plus à la puissance modifiée)."
+        f"Mode What-if : répartition **recalculée** pour la puissance modifiée, "
+        f"à partir de la décision du **{source_decision_wi}**, puis passée au filtre "
+        "physique de sécurité."
     )
 
 total_mag = abs(p_eb) + abs(p_pb)
