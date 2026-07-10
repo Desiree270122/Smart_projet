@@ -75,7 +75,7 @@ with col_s:
     strategie = st.selectbox(
         "Stratégie de référence",
         list(resultats.keys()),
-        format_func=lambda nom: MODEL_DISPLAY_NAMES.get(nom, nom),
+        format_func=lambda nom: nom,
     )
 
 traj = resultats[strategie]

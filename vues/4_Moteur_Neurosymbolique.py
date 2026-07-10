@@ -125,7 +125,7 @@ lignes_tableau = []
 for nom, traj in resultats.items():
     lignes_tableau.append(
         {
-            "Stratégie": MODEL_DISPLAY_NAMES.get(nom, nom),
+            "Stratégie": nom,
             "Alpha appliqué": float(
                 traj["alpha_final"][instant_choisi]
             ),

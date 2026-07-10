@@ -30,7 +30,7 @@ from core.navigation import pied_navigation
 
 # Configuration de page gérée par le routeur Accueil.py.
 
-st.title("Résultats & Analyse")
+st.title("Résultats et Analyse")
 
 
 # ------------------------------------------------------------

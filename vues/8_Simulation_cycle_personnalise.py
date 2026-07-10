@@ -59,7 +59,7 @@ CLES_RESULTATS_A_SUPPRIMER = [
 
 
 def nom_affiche(code):
-    return MODEL_DISPLAY_NAMES.get(code, code)
+    return code
 
 
 def supprimer_anciens_resultats():

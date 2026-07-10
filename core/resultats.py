@@ -37,8 +37,9 @@ NOMS_AFFICHAGE = {
 
 
 def nom_affichage(cle: str) -> str:
-    """Libellé lisible d'une stratégie."""
-    return NOMS_AFFICHAGE.get(cle, cle)
+    """Libellé d'une stratégie. Pour le moment on affiche le code interne
+    (EMS_MLP, EMS_LSTM, ...) tel quel, à la demande de l'utilisateur."""
+    return cle
 
 
 def charger_reference(chemin=None) -> dict:

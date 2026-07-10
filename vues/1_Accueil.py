@@ -130,7 +130,7 @@ m1, m2, m3 = st.columns(3)
 
 with m1:
     with st.container(border=True):
-        st.markdown("**Données & Prétraitement**")
+        st.markdown("**Données et Prétraitement**")
         st.write("Importer un cycle, calculer forces, puissance et courants.")
     with st.container(border=True):
         st.markdown("**Base de connaissances HESS**")
@@ -198,5 +198,5 @@ with acces1:
     if st.button("Explorer les résultats", type="primary", use_container_width=True):
         st.switch_page("vues/5_Comparaison_des_strategies.py")
 with acces2:
-    if st.button("Lancer une simulation", use_container_width=True):
-        st.switch_page("vues/8_Simulation_cycle_personnalise.py")
+    if st.button("Préparation des données", use_container_width=True):
+        st.switch_page("vues/2_Preparation_donnees.py")
