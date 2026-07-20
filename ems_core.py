@@ -17,8 +17,6 @@ except ImportError as _exc:
     ) from _exc
 
 
-
-
 TORCH_GEOMETRIC_AVAILABLE = None  # None = non testé ; True/False = résultat du premier test
 
 
@@ -47,8 +45,6 @@ def _import_torch_geometric():
         TORCH_GEOMETRIC_AVAILABLE = False
 
     return TORCH_GEOMETRIC_AVAILABLE
-
-
 
 
 def _resolve_root_dir():
@@ -98,7 +94,6 @@ for _directory in [
         parents=True,
         exist_ok=True,
     )
-
 
 
 V_EB_PACK_NOM = 450.0
@@ -196,8 +191,6 @@ _P_EB_CONV_MIN = (
 )
 
 
-
-
 CONVERTER_N_COMPOSANTS = 1
 CONVERTER_P_DECHARGE_PAR_COMPOSANT_W = 1520.0
 CONVERTER_P_RECHARGE_PAR_COMPOSANT_W = -760.0
@@ -232,8 +225,6 @@ DEVICE = torch.device(
 )
 
 
-
-
 VEHICLE_MASS_KG = 1400.0
 GRAVITY_MS2 = 9.81
 FRONTAL_AREA_M2 = 2.75
@@ -243,7 +234,6 @@ ROLLING_C1 = 1.6e-6
 AIR_DENSITY_KG_M3 = 1.225
 ROAD_SLOPE_RAD = 0.0
 DEFAULT_SAMPLING_HZ = 1.0
-
 
 
 CELL_EB_I_RECHARGE_A = -2.0
@@ -336,7 +326,6 @@ def set_battery_pack_parameters(pack, caracteristiques):
     ENERGY_SHARE_EB = ENERGY_EB_WH / ENERGY_TOTAL_WH
     ENERGY_SHARE_PB = ENERGY_PB_WH / ENERGY_TOTAL_WH
     ENERGY_COST_NORMALIZER = max(1.0 / ENERGY_SHARE_EB**2, 1.0 / ENERGY_SHARE_PB**2)
-
 
 
 _COLUMN_KEYWORDS = {
@@ -622,9 +611,7 @@ def compute_forces_and_power(
     }
 
 
-# ============================================================
 # Fonctions physiques de base
-# ============================================================
 
 def estimate_p_conv(p_eb):
     p_eb = np.asarray(
@@ -1633,13 +1620,11 @@ def current_from_power(
     )
 
 
-# ============================================================
 # Logique floue — copie fidèle de 09_EMS_fuzzy_logic.ipynb
 # Cellules 2, 4, 6 et 8
 #
 # SOC_LOW_THRESHOLD = 0.30 CONFIRME dans 01_configuration.ipynb
 # (n'etait qu'une valeur supposee auparavant).
-# ============================================================
 
 SOC_LOW_THRESHOLD = 0.30  # confirme (01_configuration.ipynb)
 
@@ -2088,14 +2073,12 @@ def alpha_fuzzy_calc(
     }
 
 
-# ============================================================
 # États symboliques et libellés des règles
 # Pages Explicabilité et Ontologie
 #
 # ATTENTION : compute_symbolic_states fournit une lecture
 # simplifiée à seuils fixes. Cette fonction N'EST PAS un
 # moteur d'inférence OWL/SWRL exécuté en direct.
-# ============================================================
 
 SYMBOLIC_HIGH_POWER_RATIO = 0.60  # cohérent avec le seuil de power_strong_traction
 
@@ -2171,9 +2154,7 @@ RULE_LABELS_FR = {
 }
 
 
-# ============================================================
 # Classes des modèles
-# ============================================================
 
 class MLPSimpleModel(nn.Module):
 
@@ -2520,10 +2501,8 @@ class GNNSimple(nn.Module):
         ).squeeze(-1)
 
 
-# ============================================================
 # Configuration des sept stratégies
 # Chemins, hyperparamètres et colonnes d'entrée
-# ============================================================
 
 # --- EMS_MLP -------------------------------------------------------------
 
@@ -2612,7 +2591,6 @@ LSTM_NS_FEATURE_COLS = [
 ] 
 
 
-
 LSTM_OUTPUT_NAMES = ["Pdem_future", "delta_SOC_EB", "delta_SOC_PB"]  
 
 LSTM_WINDOW = 20 
@@ -2667,10 +2645,8 @@ GNN_GRAPHS_FILE = (
 )
 
 
-# ============================================================
 # Description des stratégies
 # Source commune aux pages 7 (résumé) et 8 (tableau)
-# ============================================================
 
 MODEL_ORDER = [
     "EMS_power_limitation",
@@ -2815,9 +2791,7 @@ MODEL_CONSTRUCTION_DETAILED = [
 ]
 
 
-# ============================================================
 # Chargement des modèles entraînés
-# ============================================================
 
 def _resumer_erreur_chargement(exc: Exception, nom_modele: str) -> str:
     """Traduit/simplifie l'erreur (souvent en anglais) de
@@ -3231,9 +3205,7 @@ def deriver_alpha_depuis_sortie_lstm(
     return alpha, diagnostic
 
 
-# ============================================================
 # Simulation en boucle fermée des stratégies déployables
-# ============================================================
 
 def _trajectoire_vide(n):
     traj = {
@@ -3446,10 +3418,8 @@ def simuler_toutes_strategies(
     avertissements = []
 
 
-    # --------------------------------------------------------
     # EMS_power_limitation
     # Cette stratégie reste toujours calculable
-    # --------------------------------------------------------
 
     resultats["EMS_power_limitation"] = (
         simuler_strategie_deterministe(
@@ -3467,9 +3437,7 @@ def simuler_toutes_strategies(
     )
 
 
-    # --------------------------------------------------------
     # EMS_fuzzy_logic
-    # --------------------------------------------------------
 
     def _alpha_fuzzy_instant(
         t,
@@ -3510,9 +3478,7 @@ def simuler_toutes_strategies(
     )
 
 
-    # --------------------------------------------------------
     # EMS_MLP
-    # --------------------------------------------------------
 
     if "EMS_MLP" in modeles_charges:
         model = modeles_charges[
@@ -3585,8 +3551,6 @@ def simuler_toutes_strategies(
                 "EMS_MLP non simulé : une colonne d'entrée "
                 f"est absente ({exc}). Vérifie MLP_INPUT_COLS."
             )
-
-
 
 
     def _construire_predicteur_lstm_brut(model, feature_cols, window, scaler=None):
@@ -3748,7 +3712,6 @@ def simuler_toutes_strategies(
             avertissements.append(f"EMS_LSTM_neurosymbolic non simule : {exc}")
 
 
-
     if "EMS_MLP_neurosymbolic" in modeles_charges:
         model = modeles_charges["EMS_MLP_neurosymbolic"]
 
@@ -3842,13 +3805,11 @@ def simuler_toutes_strategies(
                 )
 
 
-    # --------------------------------------------------------
     # EMS_GNN
     #
     # Simule en boucle fermee via construire_graphe_instant, desormais
     # CONFIRME (aretes, features par noeud et normalisation reproduisent
     # exactement 05_EMS_graph_construction.ipynb).
-    # --------------------------------------------------------
 
     if "EMS_GNN" in modeles_charges:
         model = modeles_charges["EMS_GNN"]
