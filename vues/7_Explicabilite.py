@@ -36,9 +36,7 @@ st.title("Pourquoi cette décision ?")
 st.caption("Analyse et justification d'une décision EMS, à un instant donné, en langage physique.")
 
 
-# ------------------------------------------------------------
 # Données (résultats précalculés via le pont)
-# ------------------------------------------------------------
 
 try:
     assurer_donnees_session(st)
@@ -55,9 +53,7 @@ if not resultats or df is None:
     st.stop()
 
 
-# ------------------------------------------------------------
 # Choix de l'instant et de la stratégie
-# ------------------------------------------------------------
 
 n_points = min(len(traj["P_EB"]) for traj in resultats.values())
 
@@ -100,9 +96,7 @@ part_eb = 100.0 * abs(p_eb) / total_mag if total_mag > 1.0 else 0.0
 part_pb = 100.0 * abs(p_pb) / total_mag if total_mag > 1.0 else 0.0
 
 
-# ============================================================
 # 1. Situation du véhicule
-# ============================================================
 
 st.header("1. Situation du véhicule")
 
@@ -113,9 +107,7 @@ c3.metric("Puissance demandée", kw(p_dem))
 c4.metric("Accélération", f"{accel:.2f} m/s²")
 
 
-# ============================================================
 # 2. Analyse des capacités
-# ============================================================
 
 st.header("2. Que peut fournir chaque batterie ?")
 
@@ -146,9 +138,7 @@ else:
     st.info("Conclusion : demande quasi nulle, le véhicule est à l'arrêt ou en roue libre.")
 
 
-# ============================================================
 # 3. Raisonnement du modèle
-# ============================================================
 
 st.header("3. Raisonnement suivi")
 
@@ -192,9 +182,7 @@ else:
     )
 
 
-# ============================================================
 # 4. Décision
-# ============================================================
 
 st.header("4. Décision prise")
 
@@ -207,9 +195,7 @@ with dec2:
     st.progress(min(1.0, part_pb / 100.0))
 
 
-# ============================================================
 # 5. Pourquoi pas une autre décision ?
-# ============================================================
 
 st.header("5. Pourquoi pas une autre répartition ?")
 
@@ -238,9 +224,7 @@ else:
     )
 
 
-# ============================================================
 # 6. Raisonnement propre au modèle
-# ============================================================
 
 st.header("6. Comment cette stratégie raisonne-t-elle ?")
 

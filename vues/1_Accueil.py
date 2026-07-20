@@ -1,9 +1,7 @@
 import streamlit as st
 
 
-# ============================================================
 # Titre + sous-titre
-# ============================================================
 
 st.title("2SMART — Semi-Supervised MAnagement of dual battery electric vehicles")
 
@@ -14,9 +12,7 @@ st.markdown(
 )
 
 
-# ============================================================
 # Chaîne de traitement (pipeline)
-# ============================================================
 
 st.subheader("Chaîne de traitement")
 
@@ -35,9 +31,7 @@ for col, etape in zip(cols_pipe, etapes):
             st.markdown(f"**{etape}**")
 
 
-# ============================================================
 # Présentation
-# ============================================================
 
 st.subheader("Le projet")
 
@@ -50,9 +44,7 @@ st.write(
 )
 
 
-# ============================================================
 # Objectifs
-# ============================================================
 
 st.subheader("Objectifs")
 
@@ -101,9 +93,7 @@ with obj5:
         )
 
 
-# ============================================================
 # Variable de décision alpha
-# ============================================================
 
 st.subheader("Variable de décision")
 
@@ -120,9 +110,7 @@ with eq2:
     st.latex(r"P_{EB} = (1 - \alpha) \times P_{dem}")
 
 
-# ============================================================
 # Architecture de l'application
-# ============================================================
 
 st.subheader("Architecture de l'application")
 
@@ -153,9 +141,7 @@ with m3:
         st.write("Justification de chaque décision EMS en langage physique.")
 
 
-# ============================================================
 # Deux modes d'utilisation
-# ============================================================
 
 st.subheader("Deux modes d'utilisation")
 
@@ -183,9 +169,7 @@ with mode2:
         )
 
 
-# ============================================================
 # Conclusion + accès
-# ============================================================
 
 st.info(
     "L'application permet de comparer sept stratégies EMS, d'analyser leurs "

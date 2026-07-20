@@ -57,9 +57,7 @@ st.caption(
 )
 
 
-# ------------------------------------------------------------
 # Données : résultats de référence précalculés (via le pont)
-# ------------------------------------------------------------
 
 try:
     assurer_donnees_session(st)
@@ -76,9 +74,7 @@ if not resultats or df is None:
     st.stop()
 
 
-# ------------------------------------------------------------
 # Choix de l'instant et de la stratégie de référence
-# ------------------------------------------------------------
 
 n_points = min(len(traj["P_EB"]) for traj in resultats.values())
 
@@ -182,9 +178,7 @@ else:
     regime = "Arrêt / roue libre"
 
 
-# ============================================================
 # 1. Situation actuelle
-# ============================================================
 
 st.header("1. Situation actuelle")
 
@@ -209,9 +203,7 @@ s3.metric(
 s4.metric("Mode de fonctionnement", regime)
 
 
-# ============================================================
 # 2. État du HESS
-# ============================================================
 
 st.header("2. État des composants du HESS")
 
@@ -250,9 +242,7 @@ with etat_col3:
         st.markdown("Correction appliquée" if correction else "Aucune correction")
 
 
-# ============================================================
 # 3. Analyse des capacités
-# ============================================================
 
 st.header("3. Que peut réellement fournir chaque batterie ?")
 
@@ -305,9 +295,7 @@ else:
     st.info("Demande quasi nulle : le véhicule est à l'arrêt ou en roue libre.")
 
 
-# ============================================================
 # 4. Raisonnement intelligent
-# ============================================================
 
 st.header("4. Raisonnement du système")
 
@@ -378,9 +366,7 @@ else:
             st.progress(min(1.0, float(force)), text=f"Intensité : {force * 100:.0f} %")
 
 
-# ============================================================
 # 5. Décision finale
-# ============================================================
 
 st.header("5. Décision finale")
 
@@ -414,9 +400,7 @@ st.markdown(
 )
 
 
-# ============================================================
 # 6. Détails techniques (optionnels) — pour experts
-# ============================================================
 
 st.divider()
 

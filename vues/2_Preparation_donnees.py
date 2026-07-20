@@ -30,9 +30,7 @@ st.write(
     "français ou en anglais. Tu peux ensuite modifier les choix proposés."
 )
 
-# ============================================================
 # 1. Importation du fichier
-# ============================================================
 
 st.subheader("1. Importation du fichier")
 
@@ -153,10 +151,8 @@ with st.expander("Aperçu des données brutes"):
         use_container_width=True,
     )
 
-# ============================================================
 # 2. Sélection des colonnes, unités, répétitions
 #    et paramètres du véhicule
-# ============================================================
 
 st.caption(
     "Tous les réglages ci-dessous sont regroupés dans un formulaire. "
@@ -499,9 +495,7 @@ if valide:
         st.stop()
 
     with st.spinner("Préparation en cours..."):
-        # ----------------------------------------------------
         # Temps et vitesse du cycle de base, avant répétition
-        # ----------------------------------------------------
 
         if time_col is not None:
             temps_brut = pd.to_numeric(
@@ -591,10 +585,8 @@ if valide:
             for col, valeurs in forces.items():
                 df_base[col] = valeurs
 
-        # ----------------------------------------------------
         # Répétition du cycle déjà calculé,
         # sans nouvelle dérivation
-        # ----------------------------------------------------
 
         n_rep = int(nombre_repetitions)
 
@@ -647,9 +639,7 @@ meta = st.session_state.get(
 
 st.divider()
 
-# ============================================================
 # 6. Formules utilisées (dynamique du véhicule + architecture batteries)
-# ============================================================
 
 st.subheader("6. Formules utilisées")
 
@@ -678,9 +668,7 @@ with st.expander("Récapitulatif des formules (dynamique du véhicule et packs b
 """
     )
 
-# ============================================================
 # 7. Architecture des batteries -- nombre de cellules, masses
-# ============================================================
 
 st.subheader("7. Architecture des batteries")
 
@@ -723,9 +711,7 @@ st.caption(
     f"({pb_n_serie} en série × {pb_n_parallele} en parallèle)."
 )
 
-# ============================================================
 # 8. Résultats -- caractéristiques calculées des packs
-# ============================================================
 
 st.subheader("8. Résultats des packs batteries")
 
@@ -786,9 +772,7 @@ st.session_state["architecture_batteries"] = {
            "de": pb_de, "capacite": pb_capacite, "rint": pb_rint, **resultats_pb},
 }
 
-# ============================================================
 # 9. Convertisseur -- nombre de composants et puissance associee
-# ============================================================
 
 st.divider()
 st.subheader("9. Convertisseur")
@@ -843,13 +827,11 @@ st.session_state["architecture_convertisseur"] = {
     **resultats_conv,
 }
 
-# ============================================================
 # À partir d'ici : visualisation et export, une fois toute la
 # configuration (colonnes, véhicule, batteries bloc 7-8, convertisseur
 # bloc 9) terminée. Placé après le bloc 9 pour que l'aperçu SOC utilise
 # bien les paramètres batteries/convertisseur tels que configurés
 # ci-dessus, plutôt que les valeurs par défaut.
-# ============================================================
 
 st.divider()
 

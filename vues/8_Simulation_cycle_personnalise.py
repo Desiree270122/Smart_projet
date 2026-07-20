@@ -116,9 +116,7 @@ def _simuler_en_cache(df, soc_eb0, soc_pb0, signature_modeles, pas_alpha, _model
         return simuler_toutes_strategies(df, soc_eb0, soc_pb0, _modeles_charges)
 
 
-# ============================================================
 # Page
-# ============================================================
 
 st.title("Nouvelle simulation")
 
@@ -140,9 +138,7 @@ df = st.session_state["cycle_pret"].copy()
 nb_points = len(df)
 
 
-# ------------------------------------------------------------
 # Étape 1 — Cycle
-# ------------------------------------------------------------
 
 st.header("Étape 1 — Cycle de conduite")
 st.write(
@@ -151,9 +147,7 @@ st.write(
 )
 
 
-# ------------------------------------------------------------
 # Étape 2 — Stratégies
-# ------------------------------------------------------------
 
 st.header("Étape 2 — Stratégies à simuler")
 st.caption(
@@ -173,9 +167,7 @@ if "EMS_MLP_neurosymbolic" in selected:
     selected.add("EMS_LSTM")
 
 
-# ------------------------------------------------------------
 # Étape 3 — Conditions initiales
-# ------------------------------------------------------------
 
 st.header("Étape 3 — Conditions initiales")
 c1, c2 = st.columns(2)
@@ -188,9 +180,7 @@ if "SOC_PB" in df.columns and nb_points > 0:
     df.loc[df.index[0], "SOC_PB"] = soc_pb0
 
 
-# ------------------------------------------------------------
 # Étape 4 — Résolution
-# ------------------------------------------------------------
 
 st.header("Étape 4 — Résolution")
 resolution = st.radio(
@@ -202,9 +192,7 @@ resolution = st.radio(
 pas_alpha = {"Rapide": 0.005, "Standard": 0.002, "Précise": 0.001}[resolution]
 
 
-# ------------------------------------------------------------
 # Étape 5 — Lancer
-# ------------------------------------------------------------
 
 st.header("Étape 5 — Lancer")
 
@@ -242,9 +230,7 @@ if st.button("Lancer la simulation", type="primary"):
     st.session_state["_sim_custom_faite"] = True
 
 
-# ------------------------------------------------------------
 # Résumé final (uniquement si une simulation a été lancée ici)
-# ------------------------------------------------------------
 
 if st.session_state.get("_sim_custom_faite"):
     resultats = st.session_state["resultats_simulation"]

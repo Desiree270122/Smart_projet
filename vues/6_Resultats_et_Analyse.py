@@ -33,9 +33,7 @@ from core.navigation import pied_navigation
 st.title("Résultats et Analyse")
 
 
-# ------------------------------------------------------------
 # Données (résultats précalculés via le pont)
-# ------------------------------------------------------------
 
 try:
     _source = assurer_donnees_session(st)
@@ -69,9 +67,7 @@ def _meilleur(cle, sens="max"):
     return (max if sens == "max" else min)(paires, key=lambda kv: kv[1])[0]
 
 
-# ============================================================
 # 1. Tableau de bord (KPI)
-# ============================================================
 
 st.header("1. Tableau de bord")
 
@@ -98,9 +94,7 @@ r2.metric("Préserve le mieux la PB", nom_affichage(_meilleur("soc_pb_final", "m
 r3.metric("Pics de courant PB les plus faibles", nom_affichage(_meilleur("i_pb_max", "min")))
 
 
-# ============================================================
 # 2. Évolution des SOC (interactif)
-# ============================================================
 
 st.header("2. Évolution des états de charge (SOC)")
 
@@ -141,9 +135,7 @@ st.info(
 )
 
 
-# ============================================================
 # 3. Répartition des puissances (boxplots)
-# ============================================================
 
 st.header("3. Répartition des puissances")
 
@@ -177,9 +169,7 @@ st.info(
 )
 
 
-# ============================================================
 # 4. Sollicitation électrique (courants)
-# ============================================================
 
 st.header("4. Sollicitation électrique (courants)")
 
@@ -214,9 +204,7 @@ st.info(
 )
 
 
-# ============================================================
 # 5. Comparaison des stratégies (scores normalisés)
-# ============================================================
 
 st.header("5. Comparaison des stratégies")
 
@@ -264,9 +252,7 @@ fig_radar.update_layout(
 st.plotly_chart(fig_radar, use_container_width=True)
 
 
-# ============================================================
 # 6. Conclusion automatique
-# ============================================================
 
 st.header("6. Conclusion")
 

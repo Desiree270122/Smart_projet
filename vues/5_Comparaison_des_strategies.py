@@ -42,9 +42,7 @@ st.caption(
 )
 
 
-# ------------------------------------------------------------
 # Classement général (moyenne des scores normalisés sur tous les critères)
-# ------------------------------------------------------------
 
 def _scores_globaux(metriques):
     """Score 0-1 par stratégie : moyenne des scores normalisés sur les critères
@@ -83,9 +81,7 @@ with col_hi:
 st.divider()
 
 
-# ------------------------------------------------------------
 # Colonnes affichées + sens de tri
-# ------------------------------------------------------------
 
 COLONNES = {
     "cout_physique_moyen": ("Coût physique moyen", "{:.4f}"),
@@ -110,9 +106,7 @@ metrique_critere, sens = CRITERES[critere]
 meilleure_cle, meilleure_val = meilleure_strategie(metriques, critere)
 
 
-# ------------------------------------------------------------
 # Verdict
-# ------------------------------------------------------------
 
 st.subheader("Verdict")
 
@@ -126,9 +120,7 @@ else:
     )
 
 
-# ------------------------------------------------------------
 # Meilleure stratégie pour CHAQUE critère (vue d'ensemble)
-# ------------------------------------------------------------
 
 st.markdown("**Meilleure stratégie par critère**")
 
@@ -162,9 +154,7 @@ st.dataframe(
 )
 
 
-# ------------------------------------------------------------
 # Tableau de classement (trié selon le critère)
-# ------------------------------------------------------------
 
 ordre = sorted(
     metriques.items(),
@@ -183,10 +173,6 @@ for nom, m in ordre:
 tableau = pd.DataFrame(lignes).set_index("Stratégie")
 st.dataframe(tableau, use_container_width=True)
 
-
-# ------------------------------------------------------------
-# Note d'honnêteté scientifique (coût vs conformité)
-# ------------------------------------------------------------
 
 from core.navigation import pied_navigation
 

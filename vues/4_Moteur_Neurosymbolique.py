@@ -18,10 +18,8 @@ from ems_core import MODEL_DISPLAY_NAMES
 st.title("Moteur Neuro-Symbolique — analyse à l'instant t")
 
 
-# ============================================================
 # Données : résultats de RÉFÉRENCE précalculés (via le pont), ou
 # simulation de cycle personnalisé si elle existe. Aucun calcul lourd ici.
-# ============================================================
 
 from core.resultats import assurer_donnees_session
 
@@ -53,9 +51,7 @@ if not resultats:
     st.stop()
 
 
-# ============================================================
 # Sélection de l'instant à analyser
-# ============================================================
 
 nombre_points_max = min(
     len(traj["P_EB"])
@@ -85,9 +81,7 @@ st.write(
 )
 
 
-# ============================================================
 # Courbe de la puissance demandée sur tout le cycle
-# ============================================================
 
 st.subheader("Puissance demandée sur le cycle")
 
@@ -151,9 +145,7 @@ fig_puissance.update_layout(
 st.plotly_chart(fig_puissance, use_container_width=True)
 
 
-# ============================================================
 # Construction du tableau comparatif
-# ============================================================
 
 st.subheader("Détail par stratégie à cet instant")
 
@@ -202,9 +194,7 @@ st.dataframe(
 )
 
 
-# ============================================================
 # Navigation vers la comparaison des stratégies
-# ============================================================
 
 from core.navigation import pied_navigation
 
