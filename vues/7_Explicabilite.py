@@ -24,6 +24,7 @@ from ems_core import (
     V_EB_PACK_NOM,
     V_PB_PACK_NOM,
     P_EB_MAX_W,
+    P_EB_MIN_W,
     SOC_EB_MIN,
 )
 from core.resultats import assurer_donnees_session, nom_affichage
@@ -147,17 +148,35 @@ st.header("2. Ce que la stratégie utilise réellement")
 
 if strategie == "EMS_power_limitation":
     st.markdown("**Stratégie physique déterministe** — priorité à la batterie Énergie, dans ses limites.")
-    cond1 = soc_eb > SOC_EB_MIN
-    cond2 = 0 < p_dem <= P_EB_MAX_W
     st.markdown(
-        f"- SOC EB ({soc_eb * 100:.0f} %) au-dessus du minimum ({SOC_EB_MIN * 100:.0f} %) : "
-        f"**{'oui' if cond1 else 'non'}**\n"
-        f"- Demande ({kw(p_dem)}) dans la limite de l'EB ({kw(P_EB_MAX_W)}) : "
-        f"**{'oui' if cond2 else 'non'}**"
+        f"- SOC EB : **{soc_eb * 100:.0f} %** (minimum {SOC_EB_MIN * 100:.0f} %)\n"
+        f"- Demande : **{kw(p_dem)}** (limite EB en décharge {kw(P_EB_MAX_W)}, "
+        f"en recharge {kw(P_EB_MIN_W)})"
     )
-    st.caption(
-        "Règle : l'EB fournit la puissance qu'elle peut (jusqu'à sa limite), la PB complète le reste."
-    )
+    # Règle réellement appliquée à cet instant (branche active de la logique EB-priority).
+    if abs(p_dem) <= EPS_POWER_W:
+        regle = "demande quasi nulle : aucune batterie n'est sollicitée."
+    elif p_dem < 0:
+        if p_dem < P_EB_MIN_W:
+            regle = (
+                f"freinage fort : l'EB absorbe jusqu'à sa limite ({kw(P_EB_MIN_W)}), "
+                f"la PB absorbe le surplus ({kw(p_dem - P_EB_MIN_W)})."
+            )
+        else:
+            regle = "freinage modéré : l'EB absorbe toute l'énergie récupérée."
+    elif soc_eb <= SOC_EB_MIN:
+        regle = (
+            f"l'EB est à son SOC minimum ({soc_eb * 100:.0f} %) : elle est protégée, "
+            "la PB fournit toute la demande."
+        )
+    elif p_dem <= P_EB_MAX_W:
+        regle = "la demande tient dans la limite de l'EB : l'EB fournit seule, la PB reste au repos."
+    else:
+        regle = (
+            f"la demande dépasse la limite de l'EB : l'EB donne son maximum ({kw(P_EB_MAX_W)}), "
+            f"la PB complète ({kw(p_dem - P_EB_MAX_W)})."
+        )
+    st.success(f"**Règle appliquée ici** : {regle}")
 
 elif strategie == "EMS_fuzzy_logic":
     st.markdown("**Logique floue** — les règles expertes et leur force (poids des règles).")
