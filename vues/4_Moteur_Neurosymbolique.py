@@ -21,7 +21,7 @@ st.title("Moteur Neuro-Symbolique — analyse à l'instant t")
 # Données : résultats de RÉFÉRENCE précalculés (via le pont), ou
 # simulation de cycle personnalisé si elle existe. Aucun calcul lourd ici.
 
-from core.resultats import assurer_donnees_session
+from core.resultats import assurer_donnees_session, nom_affichage
 
 try:
     _source = assurer_donnees_session(st)
@@ -68,7 +68,7 @@ instant_choisi = st.slider(
 strategie_graphe = st.selectbox(
     "Stratégie de référence pour le graphe (P_EB, P_PB, alpha affichés au survol)",
     list(resultats.keys()),
-    format_func=lambda n: n,
+    format_func=nom_affichage,
 )
 
 
@@ -154,7 +154,7 @@ lignes_tableau = []
 for nom, traj in resultats.items():
     lignes_tableau.append(
         {
-            "Stratégie": nom,
+            "Stratégie": nom_affichage(nom),
             "Alpha appliqué": float(
                 traj["alpha_final"][instant_choisi]
             ),

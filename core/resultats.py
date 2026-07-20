@@ -37,8 +37,11 @@ NOMS_AFFICHAGE = {
 
 
 def nom_affichage(cle: str) -> str:
-    """Libellé d'une stratégie. Pour le moment on affiche le code interne
-    (EMS_MLP, EMS_LSTM, ...) tel quel, à la demande de l'utilisateur."""
+    """Libellé d'une stratégie. On affiche le code interne (EMS_MLP, EMS_LSTM,
+    ...) tel quel, sauf la stratégie déterministe de référence, renommée
+    « Modèle physique » car elle repose sur la physique et non sur de l'IA."""
+    if cle == "EMS_power_limitation":
+        return "Modèle physique"
     return cle
 
 

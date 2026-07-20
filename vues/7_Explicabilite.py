@@ -26,7 +26,7 @@ from ems_core import (
     MODEL_DISPLAY_NAMES,
     EPS_POWER_W,
 )
-from core.resultats import assurer_donnees_session
+from core.resultats import assurer_donnees_session, nom_affichage
 from core.navigation import pied_navigation
 
 
@@ -64,7 +64,7 @@ with col_s:
     strategie = st.selectbox(
         "Stratégie",
         list(resultats.keys()),
-        format_func=lambda n: n,
+        format_func=nom_affichage,
     )
 
 traj = resultats[strategie]
