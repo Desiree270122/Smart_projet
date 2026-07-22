@@ -13,6 +13,7 @@ import streamlit as st
 import ems_core as core
 from ems_core import alpha_fuzzy_calc, EPS_POWER_W
 from core.resultats import assurer_donnees_session, nom_affichage
+from core import ontology_explainer as ox
 
 
 # Configuration de page gérée par le routeur Accueil.py.
@@ -74,7 +75,7 @@ CRITERES_INSTANT = [
     ("Intervention du filtre de sécurité", 15),
     ("Préservation et équilibre des batteries", 10),
     ("Stabilité de la décision", 5),
-    ("Cohérence avec les règles expertes", 5),
+    ("Cohérence avec OntoHESS", 5),
 ]
 
 
@@ -162,7 +163,9 @@ def _evaluer(resultats, instant, p_dem, accel):
             "Intervention du filtre de sécurité": 15 * s_filtre[nom],
             "Préservation et équilibre des batteries": 10 * s_equil[nom],
             "Stabilité de la décision": 5 * s_stab[nom],
-            "Cohérence avec les règles expertes": 5 * s_exp[nom],
+            # Écart à la proposition des règles floues, elles-mêmes fondées sur
+            # les concepts et seuils déclarés dans l'ontologie OntoHESS.
+            "Cohérence avec OntoHESS": 5 * s_exp[nom],
         }
         total[nom] = sum(points[nom].values())
 
@@ -292,14 +295,82 @@ if "EMS_MLP_neurosymbolic" in resultats:
         alpha_fuzzy_calc(np.array([soc_eb_ns]), np.array([soc_pb_ns]), np.array([p_dem]), np.array([accel]))["alpha"][0]
     )
     delta = alpha_req_ns - alpha_fuzzy
+
+    _etats_ns = core.compute_symbolic_states(p_dem, soc_eb_ns, soc_pb_ns)
+    _libelles_etats = {
+        "high_power_demand": "Forte demande de puissance",
+        "EB_low_SOC": "SOC batterie Énergie faible",
+        "EB_available": "Batterie Énergie disponible",
+        "PB_available": "Batterie Puissance disponible",
+        "regenerative_braking": "Freinage régénératif",
+        "converter_risk": "Convertisseur proche de sa limite",
+    }
+    _detectes = [lib for cle, lib in _libelles_etats.items() if _etats_ns.get(cle)]
+
+    def _fleche():
+        st.markdown(f"<div style='color:{C_GRIS};font-size:1.1em'>&#8595;</div>", unsafe_allow_html=True)
+
     with st.container(border=True):
-        st.markdown(f"**Règles floues** — {alpha_fuzzy * 100:.0f} % pour la PB")
-        st.markdown(f"<div style='color:{C_GRIS}'>&#8595;</div>", unsafe_allow_html=True)
-        st.markdown(f"**Correction IA** — {delta * 100:+.0f} %")
-        st.markdown(f"<div style='color:{C_GRIS}'>&#8595;</div>", unsafe_allow_html=True)
+        st.markdown("**Ontologie OntoHESS**")
+        st.caption("Concepts et seuils décrivant les composants et les états du HESS.")
+        _fleche()
+        st.markdown("**Détection des états symboliques**")
+        if _detectes:
+            for _etat in _detectes:
+                st.markdown(f"- {_etat}")
+        else:
+            st.caption("Aucun état particulier détecté : situation nominale.")
+        _fleche()
+        st.markdown(f"**Règles expertes floues** — {alpha_fuzzy * 100:.0f} % pour la PB")
+        _fleche()
+        st.markdown(f"**Correction du réseau neuronal** — {delta * 100:+.0f} %")
+        _fleche()
         st.markdown("**Filtre physique de sécurité**")
-        st.markdown(f"<div style='color:{C_GRIS}'>&#8595;</div>", unsafe_allow_html=True)
+        _fleche()
         st.markdown(f"**Décision finale** — {alpha_final_ns * 100:.0f} % pour la PB")
+
+    st.caption(
+        "La décision ne sort pas directement du réseau : elle passe d'abord par les "
+        "connaissances métier de l'ontologie, puis par les règles expertes. Le réseau "
+        "n'apporte qu'une correction bornée."
+    )
+
+
+# Raisonnement ontologique : les concepts métier actifs à cet instant
+
+st.subheader("🧩 Raisonnement ontologique")
+
+# L'état de charge dépend de la stratégie : on prend celle sélectionnée plus haut
+# pour les courbes, afin que le raisonnement porte sur un état cohérent.
+soc_eb_ref = float(tr_f["SOC_EB"][instant])
+soc_pb_ref = float(tr_f["SOC_PB"][instant])
+
+with st.container(border=True):
+    st.markdown(
+        "L'ontologie **OntoHESS** décrit les composants du système (batterie Énergie, "
+        "batterie Puissance, convertisseur, charge) ainsi que les seuils et les états "
+        "de fonctionnement. À partir des mesures physiques de cet instant, elle permet "
+        "d'identifier automatiquement les concepts métier actifs."
+    )
+    st.caption(
+        f"États de charge pris comme référence : ceux de **{nom_affichage(strategie_focus)}** "
+        "(la stratégie choisie pour les courbes ci-dessus)."
+    )
+
+    _interp = ox.interpretation_ontologique(p_dem, soc_eb_ref, soc_pb_ref)
+    st.markdown(
+        f"**État de fonctionnement inféré** : {ox.ETATS_ONTOLOGIE[_interp['etat']]} "
+        f"(`{_interp['etat']}`)"
+    )
+
+    _concepts = ox.concepts_actifs(p_dem, soc_eb_ref, soc_pb_ref)
+    _actifs = [c for c in _concepts if c["actif"]]
+    if _actifs:
+        st.markdown("**États détectés**")
+        for _c in _actifs:
+            st.markdown(f"- {_c['libelle']}")
+    else:
+        st.caption("Aucun concept particulier détecté : la situation est nominale.")
 
 
 # Raisonnement de chaque modèle (langage naturel)
@@ -426,8 +497,23 @@ if classement:
     else:
         phrase = f"À cet instant, les modèles divergent nettement (écart d'alpha de {ecart:.2f})."
     if ns_noms and corr_ns < corr_autres:
-        phrase += " Les variantes neuro-symboliques respectent mieux les contraintes physiques (moins de corrections)."
+        phrase += (
+            " Ici, les variantes neuro-symboliques nécessitent moins d'interventions du "
+            "filtre de sécurité que les autres stratégies."
+        )
+    elif ns_noms and corr_ns > corr_autres:
+        phrase += (
+            " À cet instant, les variantes neuro-symboliques nécessitent davantage "
+            "d'interventions du filtre que les autres stratégies."
+        )
     st.info(phrase)
+
+    st.caption(
+        "Rappel méthodologique : les variantes neuro-symboliques exploitent les "
+        "connaissances de l'ontologie OntoHESS (concepts, seuils et règles) **avant** "
+        "la correction neuronale. Leur décision part donc d'une base déjà cohérente "
+        "avec les contraintes physiques, que le réseau ne fait qu'ajuster à la marge."
+    )
 
 
 from core.navigation import pied_navigation
