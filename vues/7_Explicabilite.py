@@ -45,6 +45,7 @@ from ems_core import (
 )
 from core.resultats import assurer_donnees_session, nom_affichage
 from core.navigation import pied_navigation
+from core import ontology_explainer as ox
 
 
 # Couleurs de la charte (batterie Énergie = bleu, Puissance = vert).
@@ -396,9 +397,10 @@ def kw(x):
     return f"{x / 1000.0:.1f} kW"
 
 
-tab_apercu, tab_raison, tab_physique, tab_science = st.tabs(
-    ["Vue d'ensemble", "Raisonnement du modèle", "Validation physique", "Justification scientifique"]
+tab_decision, tab_pourquoi, tab_raison, tab_physique, tab_science = st.tabs(
+    ["1. Décision", "2. Pourquoi ?", "3. Raisonnement", "4. Vérification", "5. Détails scientifiques"]
 )
+tab_apercu = tab_decision
 
 
 # Vue d'ensemble : situation, décision visuelle, résumé en langage naturel
@@ -431,9 +433,82 @@ with tab_apercu:
         )
 
 
-# Raisonnement du modèle : timeline + ce que le modèle utilise réellement
+# Pourquoi ? — causes, confiance, contrefactuels (source : ontologie OntoHESS)
+
+with tab_pourquoi:
+    _concepts = ox.concepts_actifs(p_dem, soc_eb, soc_pb, p_eb=p_eb_instant)
+    _actifs = [c for c in _concepts if c["actif"]]
+
+    st.subheader("Les causes principales")
+    if _actifs:
+        for c in _actifs:
+            with st.container(border=True):
+                st.markdown(f"**{c['libelle']}**  ·  concept `{c['concept']}`")
+                st.caption(f"Constat : {c['mesure']} — conséquence : {c['consequence']}.")
+    else:
+        st.info("Aucun concept particulier n'est reconnu : la situation est nominale.")
+
+    st.subheader("Niveau de confiance")
+    _conf, _pour, _contre = ox.indice_confiance(
+        p_dem, soc_eb, soc_pb, correction, abs(alpha_final - alpha_requested)
+    )
+    st.progress(_conf / 100.0, text=f"Confiance dans la décision : {_conf:.0f} %")
+    cc1, cc2 = st.columns(2)
+    with cc1:
+        for r in _pour:
+            st.markdown(f"- {r}")
+    with cc2:
+        for r in _contre:
+            st.markdown(f"- {r}")
+    st.caption(
+        "Cet indice n'est pas une probabilité produite par un modèle : il mesure la "
+        "marge par rapport aux situations limites (seuils de SOC, limites de puissance, "
+        "correction du filtre)."
+    )
+
+    st.subheader("Que se serait-il passé si…")
+    for phrase in ox.contrefactuels(p_dem, soc_eb, soc_pb):
+        st.markdown(f"- {phrase}")
+
+
+# Raisonnement du modèle : chaîne d'inférence + ce que le modèle utilise réellement
 
 with tab_raison:
+    st.subheader("Chaîne d'inférence")
+    st.caption(
+        "Des mesures jusqu'à la validation physique, en passant par les concepts et "
+        "les règles de l'ontologie OntoHESS."
+    )
+    _chaine = ox.chaine_inference(
+        p_dem, soc_eb, soc_pb, part_eb, part_pb, correction, p_eb=p_eb_instant
+    )
+    _etapes_chaine = [
+        "**Mesures** — " + " · ".join(_chaine["mesures"]),
+        "**Concepts reconnus** — "
+        + (", ".join(c["libelle"] for c in _chaine["concepts"]) or "situation nominale"),
+        "**Règles activées** — "
+        + (
+            ", ".join(f"{r['id']}" for r in _chaine["regles"])
+            or "aucune règle numériquement évaluable"
+        ),
+        "**Décision** — " + _chaine["decision"],
+        "**Validation** — " + _chaine["validation"],
+    ]
+    _timeline(_etapes_chaine)
+
+    if _chaine["regles"]:
+        st.markdown("**Justification logique des règles activées**")
+        for r in _chaine["regles"]:
+            with st.container(border=True):
+                st.markdown(f"**{r['id']}** — conclut sur : {', '.join(r['conclusions'])}")
+                for d in r["details"]:
+                    st.markdown(f"- prémisse vérifiée : `{d['texte']}`")
+    st.caption(
+        "Règles lues directement dans ontologies/OntoHESS2.owl et évaluées avec les "
+        "valeurs de cet instant. Le solveur applique en parallèle une reproduction à "
+        "seuils fixes de ces mêmes règles."
+    )
+
     st.subheader("Fil du raisonnement")
     _timeline(_etapes_raisonnement(mode, p_dem, soc_eb, soc_pb, part_eb, part_pb, correction))
 
@@ -665,6 +740,23 @@ with tab_science:
             "Cette stratégie n'utilise pas d'états symboliques. Voir l'onglet "
             "« Raisonnement du modèle » pour son explication fidèle (règles, gradients "
             "ou importance des composants)."
+        )
+
+    st.subheader("Règles de l'ontologie non activées")
+    st.caption(
+        "Expliquer pourquoi une règle ne s'applique pas est aussi informatif que "
+        "justifier celles qui s'appliquent."
+    )
+    _, _non_act, _indet = ox.evaluer_regles(p_dem, soc_eb, soc_pb)
+    for r in _non_act[:6]:
+        echecs = [d["texte"] for d in r["details"] if d["ok"] is False]
+        if echecs:
+            st.markdown(f"- **{r['id']}** ignorée : condition non remplie — `{' ; '.join(echecs)}`")
+    if _indet:
+        st.caption(
+            f"{len(_indet)} règle(s) ne sont pas évaluables ici : elles portent sur des "
+            "grandeurs non disponibles à cet instant (tensions et courants internes du "
+            "convertisseur)."
         )
 
     st.subheader("Grandeurs brutes à cet instant")
