@@ -435,19 +435,48 @@ st.markdown(
 
 st.header("4. Pourquoi cette répartition ?")
 
-raisons = []
-if p_dem > EPS_POWER_W and part_eb >= part_pb:
-    raisons.append("la demande reste dans ce que l'EB peut fournir, on la privilégie")
-if p_dem > EPS_POWER_W and part_pb > part_eb:
-    raisons.append("la demande dépasse le confort de l'EB, la PB prend le complément")
-if soc_eb <= SOC_EB_MIN + 1e-3:
-    raisons.append("l'EB est à son minimum : elle est protégée")
-if p_dem < -EPS_POWER_W:
-    raisons.append("phase de freinage : l'énergie est dirigée vers les batteries")
+st.markdown("La décision suit une logique conditionnelle. À cet instant :")
 
-if raisons:
-    for r in raisons:
-        st.markdown(f"- {r}")
+p_dem_kw = p_dem / 1000.0
+seuil_eb_kw = P_EB_MAX_W / 1000.0
+
+if abs(p_dem) <= EPS_POWER_W:
+    st.markdown(
+        f"- **Si** la demande est quasi nulle (P_dem = {p_dem_kw:.2f} kW), "
+        "**alors** aucune batterie n'est réellement sollicitée et la répartition "
+        "reste stable."
+    )
+elif p_dem < -EPS_POWER_W:
+    st.markdown(
+        f"- **Si** le véhicule freine (P_dem = {p_dem_kw:+.1f} kW, négative), "
+        f"**alors** l'énergie récupérée recharge les batteries : {part_pb:.0f} % "
+        f"vers la PB et {part_eb:.0f} % vers l'EB."
+    )
+elif part_pb <= 5.0:
+    st.markdown(
+        f"- **Si** la demande ({p_dem_kw:.1f} kW) reste dans ce que l'EB peut "
+        f"fournir seule (≤ {seuil_eb_kw:.0f} kW), l'EB **fournit toute** la "
+        "puissance **parce que** c'est la batterie d'énergie, dédiée à "
+        "l'autonomie, et que la PB est ainsi préservée pour les pics."
+    )
+elif part_eb >= part_pb:
+    st.markdown(
+        f"- **Si** la demande ({p_dem_kw:.1f} kW) approche la limite de l'EB, "
+        f"**alors** l'EB fournit l'essentiel ({part_eb:.0f} %) et la PB apporte "
+        f"le complément ({part_pb:.0f} %) pour ne pas dépasser la capacité de l'EB."
+    )
+else:
+    st.markdown(
+        f"- **Sinon** (demande de {p_dem_kw:.1f} kW au-delà du confort de l'EB), "
+        f"la **PB prend le relais** : elle fournit {part_pb:.0f} % de la puissance "
+        f"contre {part_eb:.0f} % pour l'EB."
+    )
+
+if soc_eb <= SOC_EB_MIN + 1e-3:
+    st.markdown(
+        "- **Si** l'EB atteint son SOC minimal, **alors** elle est protégée et "
+        "la PB assure la demande."
+    )
 
 if strategie in ("EMS_MLP_neurosymbolic", "EMS_LSTM_neurosymbolic"):
     st.markdown(
