@@ -157,6 +157,114 @@ def charger_regles():
     return brutes
 
 
+@lru_cache(maxsize=1)
+def classes_ontologie():
+    """Noms des classes OWL réellement déclarées dans l'ontologie."""
+    try:
+        from rdflib import Graph, RDF, OWL
+    except ImportError:
+        return frozenset()
+    if not CHEMIN_OWL.exists():
+        return frozenset()
+    graphe = Graph()
+    try:
+        graphe.parse(str(CHEMIN_OWL))
+    except Exception:  # noqa: BLE001
+        return frozenset()
+    return frozenset(str(c).split("#")[-1] for c in graphe.subjects(RDF.type, OWL.Class))
+
+
+def diagnostic_configuration(soc_eb0, soc_pb0, nb_strategies, objectif):
+    """Pré-diagnostic de la configuration AVANT simulation, à partir des classes
+    réellement déclarées dans l'ontologie.
+
+    L'ontologie n'intervient donc plus seulement pour expliquer une décision,
+    mais aussi pour valider la cohérence de l'expérience à réaliser.
+    """
+    presentes = classes_ontologie()
+
+    attendus = [
+        ("HESS", "Architecture reconnue : système hybride de stockage"),
+        ("BatteryEB", "Source d'énergie : batterie Énergie"),
+        ("BatteryPB", "Source d'énergie : batterie Puissance"),
+        ("Converter", "Organe de répartition : convertisseur"),
+        ("ManagementStrategy", "Objet d'étude : stratégie de gestion d'énergie"),
+    ]
+    contexte = [
+        {"concept": nom, "libelle": libelle, "reconnu": nom in presentes}
+        for nom, libelle in attendus
+    ]
+
+    contraintes_owl = [
+        ("SOCCondition", "Préservation des états de charge"),
+        ("OverloadCondition", "Protection contre la surcharge"),
+        ("PowerThreshold", "Respect des seuils de puissance"),
+    ]
+    contraintes = [
+        {"concept": nom, "libelle": libelle, "reconnu": nom in presentes}
+        for nom, libelle in contraintes_owl
+    ]
+
+    alertes = []
+    if soc_eb0 < 0.35:
+        alertes.append(
+            f"L'ontologie associe un SOC initial de {soc_eb0 * 100:.0f} % à la classe "
+            "`SOCCondition` : la batterie Énergie atteindra rapidement sa limite de "
+            "fonctionnement et sera protégée par le filtre."
+        )
+    if soc_pb0 < 0.35:
+        alertes.append(
+            f"SOC initial de la batterie Puissance à {soc_pb0 * 100:.0f} % : sa capacité "
+            "à absorber les pics de demande sera fortement réduite."
+        )
+
+    if objectif == "Comparer plusieurs stratégies" and nb_strategies < 3:
+        conseils = [
+            "Pour une comparaison pertinente, sélectionnez au moins une stratégie d'IA "
+            "en plus des deux références."
+        ]
+    elif objectif == "Générer des résultats pour une publication":
+        conseils = [
+            "Pour des chiffres publiables, privilégiez la précision « Validation » et "
+            "conservez l'ensemble des stratégies."
+        ]
+    elif objectif == "Étudier une stratégie en détail":
+        conseils = [
+            "Une seule stratégie d'IA suffit : les références restent incluses comme "
+            "point de comparaison."
+        ]
+    else:
+        conseils = [
+            "Les deux stratégies de référence sont toujours simulées : elles servent "
+            "de point de comparaison."
+        ]
+
+    coherent = all(c["reconnu"] for c in contexte)
+    return {
+        "contexte": contexte,
+        "contraintes": contraintes,
+        "objectif": objectif,
+        "alertes": alertes,
+        "conseils": conseils,
+        "conclusion": (
+            "Configuration cohérente avec une étude des stratégies de gestion d'énergie "
+            "d'un système hybride de stockage."
+            if coherent
+            else "Certains concepts attendus sont absents de l'ontologie : le diagnostic "
+            "est partiel."
+        ),
+    }
+
+
+HYPOTHESES = [
+    "Tensions de pack considérées constantes (valeurs nominales).",
+    "Convertisseur représenté par un modèle de puissance simplifié avec ses limites.",
+    "Aucun modèle thermique ni de vieillissement des batteries.",
+    "Cycle de conduite connu à l'avance (pas de prédiction en ligne).",
+    "Conditions environnementales (météo, pente) non prises en compte.",
+]
+
+
 def contexte_numerique(p_dem, soc_eb, soc_pb):
     """Valeurs de l'instant analysé, sous les noms utilisés par les règles."""
     return {

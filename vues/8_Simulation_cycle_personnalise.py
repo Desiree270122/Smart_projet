@@ -29,8 +29,9 @@ from ems_core import (
     load_lstm_neurosymbolic,
     load_gnn_simple,
 )
-from core.resultats import EXPLICABILITE, NIVEAUX_EXPLICABILITE
+from core.resultats import EXPLICABILITE
 from core.navigation import pied_navigation
+from core import ontology_explainer as ox
 
 # Configuration de page gérée par le routeur Accueil.py.
 
@@ -150,26 +151,43 @@ nb_points = len(df)
 duree_cycle_s = float(df["time"].iloc[-1]) if "time" in df.columns and nb_points else 0.0
 
 
-# ① Cycle de conduite
+# Cas d'étude — simple rappel des données déjà préparées
 
-st.subheader("① Cycle de conduite")
+st.subheader("🚗 Cas d'étude")
 
 col_cyc, col_mod = st.columns([3, 1])
 with col_cyc:
     with st.container(border=True):
-        st.markdown("**Cycle actuellement chargé**")
-        i1, i2 = st.columns(2)
+        st.markdown("**Cycle de conduite préparé**")
+        i1, i2, i3 = st.columns(3)
         i1.metric("Instants", f"{nb_points:,}".replace(",", " "))
-        i2.metric("Durée du cycle", f"{duree_cycle_s / 60:.1f} min" if duree_cycle_s else "—")
+        i2.metric("Durée", f"{duree_cycle_s:.0f} s" if duree_cycle_s else "—")
+        i3.metric("État", "Données prêtes")
 with col_mod:
     st.write("")
     if st.button("Modifier le cycle", use_container_width=True):
         st.switch_page("vues/2_Preparation_donnees.py")
 
 
-# ② Stratégies à simuler
+# Objectif de l'expérience
 
-st.subheader("② Stratégies à simuler")
+st.subheader("🎯 Quel est votre objectif ?")
+
+objectif = st.radio(
+    "L'application adapte ses recommandations à votre objectif.",
+    [
+        "Comparer plusieurs stratégies",
+        "Étudier une stratégie en détail",
+        "Tester une nouvelle configuration",
+        "Générer des résultats pour une publication",
+    ],
+    index=0,
+)
+
+
+# Stratégies à comparer
+
+st.subheader("🧠 Quelles stratégies comparer ?")
 st.caption(
     "Les deux stratégies de référence (modèle physique et logique floue) sont "
     "toujours incluses. Cochez les modèles d'IA à ajouter."
@@ -201,17 +219,29 @@ table_editee = st.data_editor(
 
 selected = set(table_editee.loc[table_editee["Simuler"], "Stratégie"])
 # Dépendance : le MLP neuro-symbolique réutilise en interne le LSTM.
-dependance_ajoutee = "EMS_MLP_neurosymbolic" in selected and "EMS_LSTM" not in selected
-if "EMS_MLP_neurosymbolic" in selected:
+if "EMS_MLP_neurosymbolic" in selected and "EMS_LSTM" not in selected:
     selected.add("EMS_LSTM")
+    st.caption(
+        "Le LSTM a été ajouté automatiquement : le MLP neuro-symbolique s'appuie sur ses sorties."
+    )
 
 
-# ③ Conditions initiales
+# Conditions expérimentales
 
-st.subheader("③ Conditions initiales")
+st.subheader("🔋 Conditions expérimentales")
 c1, c2 = st.columns(2)
 soc_eb0 = c1.slider("SOC initial batterie Énergie (%)", 20, 100, 100) / 100.0
 soc_pb0 = c2.slider("SOC initial batterie Puissance (%)", 20, 100, 100) / 100.0
+
+if soc_eb0 >= 0.80 and soc_pb0 >= 0.80:
+    st.success("État expérimental : **conditions nominales** — batteries proches de la pleine charge.")
+elif soc_eb0 >= 0.50 and soc_pb0 >= 0.50:
+    st.info("État expérimental : **conditions intermédiaires** — batteries partiellement déchargées.")
+else:
+    st.warning(
+        "État expérimental : **conditions dégradées** — cette configuration simulera un "
+        "système dont les batteries sont déjà fortement déchargées."
+    )
 
 if "SOC_EB" in df.columns and nb_points > 0:
     df.loc[df.index[0], "SOC_EB"] = soc_eb0
@@ -219,117 +249,90 @@ if "SOC_PB" in df.columns and nb_points > 0:
     df.loc[df.index[0], "SOC_PB"] = soc_pb0
 
 
-# ④ Résolution
+# Précision numérique
 
-st.subheader("④ Résolution")
+st.subheader("🎚️ Précision numérique")
 resolution = st.radio(
-    "Précision du calcul (plus précis = plus lent)",
-    ["Rapide", "Standard", "Précise"],
+    "Finesse de la recherche du coefficient de répartition (plus fin = plus lent)",
+    ["Exploration", "Analyse", "Validation"],
     index=1,
     horizontal=True,
-    help="« Rapide » suffit pour explorer ; « Précise » pour des chiffres finaux.",
+    help="« Exploration » pour dégrossir ; « Validation » pour des chiffres publiables.",
 )
-pas_alpha = {"Rapide": 0.005, "Standard": 0.002, "Précise": 0.001}[resolution]
-facteur_resolution = {"Rapide": 1.0, "Standard": 1.5, "Précise": 2.5}[resolution]
+pas_alpha = {"Exploration": 0.005, "Analyse": 0.002, "Validation": 0.001}[resolution]
+facteur_resolution = {"Exploration": 1.0, "Analyse": 1.5, "Validation": 2.5}[resolution]
 
 
-# ⑤ Analyse de configuration (réagit aux choix)
-
-st.subheader("⑤ Analyse de configuration")
+# Résumé de l'expérience
 
 nb_total = len(selected) + 2  # + modèle physique et logique floue
-ns_choisis = [m for m in selected if "neurosymbolic" in m]
 poids = sum(FAMILLES[m][2] for m in selected if m in FAMILLES) * facteur_resolution
 est_lo, est_hi = int(round(poids * 1.5)), int(round(poids * 4.0))
 
-if poids <= 3:
-    complexite = "Faible"
-elif poids <= 8:
-    complexite = "Modérée"
-else:
-    complexite = "Élevée"
+st.subheader("📋 Résumé de l'expérience")
 
-observations = [f"{nb_total} stratégies seront comparées (dont les deux références)."]
-if ns_choisis:
-    observations.append(
-        f"{len(ns_choisis)} approche(s) neuro-symbolique(s) sélectionnée(s) : "
-        "décision explicable par construction."
-    )
-if dependance_ajoutee:
-    observations.append(
-        "Le LSTM a été ajouté automatiquement : le MLP neuro-symbolique s'appuie sur ses sorties."
-    )
-if "EMS_GNN" in selected:
-    observations.append("Le modèle GNN augmentera nettement le temps de calcul.")
-if len(selected) >= 4:
-    observations.append("Configuration riche : la comparaison sera pertinente mais plus longue.")
-if not selected:
-    observations.append("Aucun modèle d'IA sélectionné : seules les deux références seront simulées.")
-
-for obs in observations:
-    st.markdown(f"- {obs}")
-
-e1, e2 = st.columns(2)
-e1.metric("Complexité du calcul", complexite)
-e2.metric("Temps estimé", f"≈ {est_lo} à {est_hi} min" if poids else "—")
-st.caption(
-    "Estimation indicative : le temps réel dépend de la machine, de la longueur du "
-    "cycle et de la résolution choisie."
-)
-
-
-# Contrôle de cohérence des conditions initiales
-
-alertes = []
-if soc_eb0 < 0.30 or soc_pb0 < 0.30:
-    alertes.append(
-        f"États de charge initiaux faibles (Énergie {soc_eb0 * 100:.0f} %, "
-        f"Puissance {soc_pb0 * 100:.0f} %) : les performances risquent d'être dégradées "
-        "et les violations plus nombreuses."
-    )
-if abs(soc_eb0 - soc_pb0) >= 0.50:
-    alertes.append(
-        "Les deux batteries démarrent très déséquilibrées : le comportement initial "
-        "sera atypique."
-    )
-
-for a in alertes:
-    st.warning(a)
-
-
-# ⑥ Configuration et validation
-
-st.subheader("⑥ Configuration de la simulation")
-
-col_cfg1, col_cfg2, col_cfg3 = st.columns(3)
-with col_cfg1:
-    with st.container(border=True):
+with st.container(border=True):
+    r1, r2, r3 = st.columns(3)
+    with r1:
         st.markdown("**Cycle**")
         st.caption(f"{nb_points:,} instants".replace(",", " "))
-        st.caption(f"{duree_cycle_s / 60:.1f} min" if duree_cycle_s else "durée inconnue")
-with col_cfg2:
-    with st.container(border=True):
+        st.caption(f"{duree_cycle_s:.0f} s de conduite" if duree_cycle_s else "durée inconnue")
+    with r2:
         st.markdown(f"**Stratégies — {nb_total}**")
-        st.caption("Modèle physique, logique floue")
-        st.caption(", ".join(sorted(selected)) if selected else "aucun modèle d'IA")
-with col_cfg3:
-    with st.container(border=True):
-        st.markdown("**Conditions et résolution**")
+        st.caption("Modèle physique et logique floue (toujours incluses)")
+        st.caption(", ".join(sorted(selected)) if selected else "aucun modèle d'IA ajouté")
+    with r3:
+        st.markdown("**Conditions**")
         st.caption(f"SOC Énergie {soc_eb0 * 100:.0f} % · SOC Puissance {soc_pb0 * 100:.0f} %")
-        st.caption(f"Résolution {resolution} (pas alpha {pas_alpha})")
+        st.caption(f"Précision « {resolution} » (pas alpha {pas_alpha})")
 
-st.markdown("**Validation**")
-if alertes:
-    st.markdown("- ⚠️ Conditions initiales inhabituelles (voir avertissements ci-dessus)")
-else:
-    st.markdown("- ✔️ Conditions initiales dans une plage usuelle")
-st.markdown(f"- ✔️ Cycle chargé ({nb_points:,} instants)".replace(",", " "))
-if selected:
-    st.markdown(f"- ✔️ {len(selected)} modèle(s) d'IA sélectionné(s)")
-else:
-    st.markdown("- ⚠️ Aucun modèle d'IA sélectionné : seules les références seront simulées")
+    st.divider()
+    st.markdown(f"**Objectif** — {objectif.lower()}.")
+    st.markdown(
+        f"**Temps estimé** — ≈ {est_lo} à {est_hi} min. "
+        "Estimation indicative : dépend de la machine et de la longueur du cycle."
+        if poids
+        else "**Temps estimé** — très court : seules les deux références seront simulées."
+    )
 
-st.success("Configuration prête." if not alertes else "Configuration exécutable, avec réserves.")
+with st.expander("Hypothèses de simulation"):
+    st.caption("Ce que le modèle suppose, et qu'il faut garder en tête pour interpréter les résultats.")
+    for hypothese in ox.HYPOTHESES:
+        st.markdown(f"- {hypothese}")
+
+
+# Analyse de cohérence produite par l'ontologie, AVANT l'exécution
+
+st.subheader("🧩 Analyse de cohérence (ontologie OntoHESS)")
+
+diagnostic = ox.diagnostic_configuration(soc_eb0, soc_pb0, nb_total, objectif)
+
+diag1, diag2 = st.columns(2)
+with diag1:
+    st.markdown("**Contexte identifié**")
+    for element in diagnostic["contexte"]:
+        marque = "✔️" if element["reconnu"] else "—"
+        st.markdown(f"- {marque} {element['libelle']}  ·  `{element['concept']}`")
+with diag2:
+    st.markdown("**Contraintes principales**")
+    for element in diagnostic["contraintes"]:
+        marque = "✔️" if element["reconnu"] else "—"
+        st.markdown(f"- {marque} {element['libelle']}  ·  `{element['concept']}`")
+
+for alerte in diagnostic["alertes"]:
+    st.warning(alerte)
+for conseil in diagnostic["conseils"]:
+    st.info(conseil)
+
+st.success(diagnostic["conclusion"])
+st.caption(
+    "Concepts vérifiés par lecture directe des classes déclarées dans "
+    "ontologies/OntoHESS2.owl. L'ontologie intervient donc avant la simulation, "
+    "et non seulement lors de l'explication des décisions."
+)
+
+alertes = diagnostic["alertes"]
+
 
 if st.button("Lancer la simulation", type="primary"):
     supprimer_anciens_resultats()
