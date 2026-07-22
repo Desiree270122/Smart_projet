@@ -16,11 +16,11 @@ ORDRE_PAGES = [
     ("📂 Préparer une simulation", "vues/2_Preparation_donnees.py"),
     ("▶️ Lancer une simulation", "vues/8_Simulation_cycle_personnalise.py"),
     ("⚖️ Comparer les méthodes", "vues/5_Comparaison_des_strategies.py"),
+    ("📊 Analyse instantanée", "vues/4_Moteur_Neurosymbolique.py"),
     ("📈 Explorer les résultats", "vues/6_Resultats_et_Analyse.py"),
     ("💡 Pourquoi cette décision ?", "vues/7_Explicabilite.py"),
     ("🧠 Les modèles d'IA", "vues/9_Architecture_des_modeles.py"),
     ("📚 Base de connaissances", "vues/3_Ontologie_OntoHESS.py"),
-    ("🤖 IA + règles expertes", "vues/4_Moteur_Neurosymbolique.py"),
 ]
 
 
