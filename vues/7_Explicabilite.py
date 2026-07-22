@@ -37,6 +37,11 @@ from ems_core import (
     P_EB_MAX_W,
     P_EB_MIN_W,
     SOC_EB_MIN,
+    HIGH_POWER_THRESHOLD_W,
+    CONVERTER_RISK_THRESHOLD,
+    P_CONV_MAX_W,
+    P_CONV_MIN_W,
+    estimate_p_conv,
 )
 from core.resultats import assurer_donnees_session, nom_affichage
 from core.navigation import pied_navigation
@@ -73,6 +78,46 @@ ETATS_NS = {
     "converter_risk": "Convertisseur proche de sa limite",
 }
 ETATS_NS_KEYS = set(ETATS_NS)
+
+
+def _lignes_etats_ns(p_dem, soc_eb, soc_pb, p_eb=None):
+    """Détail dynamique des 4 états symboliques à l'instant analysé : pour
+    chacun, la grandeur mesurée, le seuil et l'état résultant. Reproduit
+    exactement les conditions de compute_symbolic_states, pour que le oui/non
+    affiché corresponde à la valeur montrée."""
+    etats = compute_symbolic_states(p_dem, soc_eb, soc_pb, p_eb=p_eb)
+
+    p_kw = p_dem / 1000.0
+    seuil_kw = HIGH_POWER_THRESHOLD_W / 1000.0
+    eps_kw = EPS_POWER_W / 1000.0
+
+    p_conv = float(estimate_p_conv(np.array([p_eb if p_eb is not None else p_dem]))[0])
+    util = p_conv / P_CONV_MAX_W if p_conv >= 0 else abs(p_conv) / abs(P_CONV_MIN_W)
+
+    details = {
+        "high_power_demand": (
+            f"|P_dem| = {abs(p_kw):.1f} kW "
+            f"{'≥' if etats['high_power_demand'] else '<'} seuil {seuil_kw:.0f} kW"
+        ),
+        "regenerative_braking": (
+            f"P_dem = {p_kw:+.1f} kW — "
+            f"{'négative, énergie récupérée' if etats['regenerative_braking'] else 'non négative, pas de récupération'}"
+        ),
+        "zero_power_demand": (
+            f"|P_dem| = {abs(p_kw):.2f} kW "
+            f"{'≤' if etats['zero_power_demand'] else '>'} seuil {eps_kw:.1f} kW"
+        ),
+        "converter_risk": (
+            f"charge convertisseur = {util * 100:.0f} % "
+            f"{'≥' if etats['converter_risk'] else '<'} seuil {CONVERTER_RISK_THRESHOLD * 100:.0f} %"
+        ),
+    }
+
+    lignes = []
+    for cle, lib in ETATS_NS.items():
+        marque = "oui" if etats[cle] else "non"
+        lignes.append(f"- **{lib}** : [{marque}] — {details[cle]}")
+    return lignes
 
 
 @st.cache_resource(show_spinner=False)
@@ -311,10 +356,10 @@ elif strategie == "EMS_MLP_neurosymbolic":
         f"corrigé de {delta * 100:+.0f} % ; le filtre de sécurité a abouti à "
         f"{alpha_final * 100:.0f} %."
     )
-    etats = compute_symbolic_states(p_dem, soc_eb, soc_pb)
-    st.markdown("**États symboliques vérifiés :**")
-    for cle, lib in ETATS_NS.items():
-        st.markdown(f"- {'[oui]' if etats[cle] else '[non]'} {lib}")
+    p_eb_instant = float(traj["I_EB"][instant]) * V_EB_PACK_NOM
+    st.markdown("**États symboliques vérifiés à cet instant :**")
+    for ligne in _lignes_etats_ns(p_dem, soc_eb, soc_pb, p_eb=p_eb_instant):
+        st.markdown(ligne)
 
 elif strategie in ("EMS_LSTM", "EMS_LSTM_neurosymbolic"):
     ns = "neurosymbolic" in strategie
@@ -334,10 +379,10 @@ elif strategie in ("EMS_LSTM", "EMS_LSTM_neurosymbolic"):
     fig_l.update_layout(title="Importance des entrées (%)", yaxis_title="%", height=340, margin=dict(t=40, b=110))
     st.plotly_chart(fig_l, use_container_width=True)
     if ns:
-        etats = compute_symbolic_states(p_dem, soc_eb, soc_pb)
-        st.markdown("**États symboliques (entrées supplémentaires du modèle NS) :**")
-        for cle, lib in ETATS_NS.items():
-            st.markdown(f"- {'[oui]' if etats[cle] else '[non]'} {lib}")
+        p_eb_instant = float(traj["I_EB"][instant]) * V_EB_PACK_NOM
+        st.markdown("**États symboliques (entrées supplémentaires du modèle NS) à cet instant :**")
+        for ligne in _lignes_etats_ns(p_dem, soc_eb, soc_pb, p_eb=p_eb_instant):
+            st.markdown(ligne)
 
 elif strategie == "EMS_GNN":
     st.markdown(
