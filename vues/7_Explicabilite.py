@@ -12,13 +12,24 @@ import streamlit as st
 from ems_core import (
     alpha_fuzzy_calc,
     compute_symbolic_states,
+    construire_graphe_instant,
     load_mlp_simple,
+    load_lstm_seul,
+    load_lstm_neurosymbolic,
+    load_gnn_simple,
     charger_scaler,
     appliquer_scaler,
     FUZZY_RULE_NAMES,
     RULE_LABELS_FR,
     MLP_INPUT_COLS,
     MLP_SCALER_FILE,
+    LSTM_FEATURE_COLS,
+    LSTM_NS_FEATURE_COLS,
+    LSTM_WINDOW,
+    LSTM_SCALER_FILE,
+    LSTM_NS_SCALER_FILE,
+    GNN_SCALER_FILE,
+    GNN_NODE_NAMES,
     DEVICE,
     EPS_POWER_W,
     V_EB_PACK_NOM,
@@ -31,13 +42,27 @@ from core.resultats import assurer_donnees_session, nom_affichage
 from core.navigation import pied_navigation
 
 
-# Étiquettes lisibles des 5 entrées du MLP.
+# Étiquettes lisibles des entrées / composants.
 LABELS_FEATURES = {
     "SOC_EB": "SOC EB",
     "SOC_PB": "SOC PB",
     "hasPower": "P_dem",
     "speed": "Vitesse",
     "hasAcceleration": "Accélération",
+    "hasTotalForce": "Force totale",
+    "I_EB": "I_EB",
+    "high_power_demand": "Forte demande",
+    "regenerative_braking": "Freinage",
+    "zero_power_demand": "Demande nulle",
+    "converter_risk": "Risque convert.",
+}
+
+LABELS_NOEUDS = {
+    "energy_battery": "Batterie Énergie",
+    "power_battery": "Batterie Puissance",
+    "converter": "Convertisseur",
+    "motor": "Moteur",
+    "vehicle": "Véhicule",
 }
 
 # Les 4 états symboliques réellement utilisés par les modèles neuro-symboliques.
@@ -47,6 +72,7 @@ ETATS_NS = {
     "zero_power_demand": "Demande quasi nulle",
     "converter_risk": "Convertisseur proche de sa limite",
 }
+ETATS_NS_KEYS = set(ETATS_NS)
 
 
 @st.cache_resource(show_spinner=False)
@@ -54,6 +80,66 @@ def _charger_mlp():
     modele = load_mlp_simple()
     modele.eval()
     return modele, charger_scaler(MLP_SCALER_FILE)
+
+
+@st.cache_resource(show_spinner=False)
+def _charger_lstm(ns):
+    modele = load_lstm_neurosymbolic() if ns else load_lstm_seul()
+    modele.eval()
+    scaler = charger_scaler(LSTM_NS_SCALER_FILE if ns else LSTM_SCALER_FILE)
+    cols = LSTM_NS_FEATURE_COLS if ns else LSTM_FEATURE_COLS
+    return modele, scaler, list(cols)
+
+
+@st.cache_resource(show_spinner=False)
+def _charger_gnn_xai():
+    res = load_gnn_simple()
+    modele = res[0] if isinstance(res, tuple) else res
+    modele.eval()
+    return modele, charger_scaler(GNN_SCALER_FILE)
+
+
+def _fenetre_lstm(cols, instant, df, traj):
+    """Reconstruit la fenêtre temporelle (LSTM_WINDOW pas) vue par le LSTM à
+    l'instant t : features physiques depuis le cycle et la trajectoire, états
+    symboliques recalculés par pas pour les variantes neuro-symboliques."""
+    idx = [max(0, instant - LSTM_WINDOW + 1 + k) for k in range(LSTM_WINDOW)]
+
+    def valeurs(col):
+        if col in ("SOC_EB", "SOC_PB", "I_EB"):
+            return np.asarray(traj[col], dtype=float)[idx]
+        if col in ETATS_NS_KEYS:
+            vals = []
+            for j in idx:
+                pj = float(df["hasPower"].iloc[j])
+                sej = float(traj["SOC_EB"][j])
+                spj = float(traj["SOC_PB"][j])
+                iej = float(traj["I_EB"][j])
+                etats_j = compute_symbolic_states(pj, sej, spj, p_eb=iej * V_EB_PACK_NOM)
+                vals.append(float(etats_j[col]))
+            return np.asarray(vals, dtype=float)
+        return df[col].to_numpy(dtype=float)[idx]
+
+    return np.stack([valeurs(c) for c in cols], axis=1).astype(np.float32)
+
+
+def _attribution_lstm(strategie, instant, df, traj):
+    """Importance de chaque entrée (|gradient × entrée| sommé sur la fenêtre)."""
+    ns = "neurosymbolic" in strategie
+    modele, scaler, cols = _charger_lstm(ns)
+    fen = _fenetre_lstm(cols, instant, df, traj)
+    if scaler is not None:
+        for k in range(fen.shape[0]):
+            try:
+                fen[k, :] = appliquer_scaler(fen[k, :], scaler)
+            except Exception:  # noqa: BLE001
+                pass
+    x = torch.tensor(fen[None, ...], dtype=torch.float32, device=DEVICE, requires_grad=True)
+    with torch.backends.cudnn.flags(enabled=False):
+        sortie = modele(x)
+        sortie.sum().backward()
+    imp = np.abs(x.grad[0].cpu().numpy() * fen).sum(axis=0)
+    return cols, imp
 
 
 st.title("Pourquoi cette décision ?")
@@ -230,17 +316,52 @@ elif strategie == "EMS_MLP_neurosymbolic":
     for cle, lib in ETATS_NS.items():
         st.markdown(f"- {'[oui]' if etats[cle] else '[non]'} {lib}")
 
-else:
+elif strategie in ("EMS_LSTM", "EMS_LSTM_neurosymbolic"):
+    ns = "neurosymbolic" in strategie
     st.markdown(
-        f"**{nom_affichage(strategie)}** — modèle appris (temporel ou relationnel). "
-        "Son raisonnement interne n'est pas directement lisible sur cette page ; on "
-        "affiche donc la décision et sa vérification physique."
+        f"**Modèle temporel (LSTM{'-NS' if ns else ''})** — il tient compte des "
+        f"{LSTM_WINDOW} dernières secondes. Influence réelle de chaque entrée sur sa "
+        "prédiction (gradient × entrée sur la fenêtre) :"
     )
-    if "neurosymbolic" in strategie:
+    cols, imp = _attribution_lstm(strategie, instant, df, traj)
+    total = imp.sum()
+    pct = imp / total * 100.0 if total > 0 else imp
+    labels = [LABELS_FEATURES.get(c, c) for c in cols]
+    ordre = list(np.argsort(pct)[::-1])
+    fig_l = go.Figure(
+        go.Bar(x=[labels[i] for i in ordre], y=[pct[i] for i in ordre], marker_color="#5B8DEF")
+    )
+    fig_l.update_layout(title="Importance des entrées (%)", yaxis_title="%", height=340, margin=dict(t=40, b=110))
+    st.plotly_chart(fig_l, use_container_width=True)
+    if ns:
         etats = compute_symbolic_states(p_dem, soc_eb, soc_pb)
-        st.markdown("**États symboliques encadrant la décision :**")
+        st.markdown("**États symboliques (entrées supplémentaires du modèle NS) :**")
         for cle, lib in ETATS_NS.items():
             st.markdown(f"- {'[oui]' if etats[cle] else '[non]'} {lib}")
+
+elif strategie == "EMS_GNN":
+    st.markdown(
+        "**Réseau de graphes (GNN)** — il raisonne sur la structure du HESS. "
+        "Influence réelle de chaque composant (nœud du graphe) sur la décision "
+        "(gradient × entrée) :"
+    )
+    modele_g, scaler_g = _charger_gnn_xai()
+    x_g, edge = construire_graphe_instant(p_dem, soc_eb, soc_pb, accel, scaler_g)
+    x_g = x_g.to(DEVICE).clone().requires_grad_(True)
+    edge = edge.to(DEVICE)
+    batch = torch.zeros(x_g.shape[0], dtype=torch.long, device=DEVICE)
+    sortie_g = modele_g(x_g, edge, batch)
+    sortie_g.sum().backward()
+    imp_g = np.abs((x_g.grad * x_g).detach().cpu().numpy()).sum(axis=1)
+    total_g = imp_g.sum()
+    pct_g = imp_g / total_g * 100.0 if total_g > 0 else imp_g
+    noms = [LABELS_NOEUDS.get(n, n) for n in GNN_NODE_NAMES]
+    fig_g = go.Figure(go.Bar(x=noms, y=pct_g, marker_color="#30A46C"))
+    fig_g.update_layout(title="Importance de chaque composant (%)", yaxis_title="%", height=340, margin=dict(t=40, b=60))
+    st.plotly_chart(fig_g, use_container_width=True)
+
+else:
+    st.info("Stratégie non reconnue pour l'explication détaillée.")
 
 
 # 3. Décision prise (avec calcul des courants)
