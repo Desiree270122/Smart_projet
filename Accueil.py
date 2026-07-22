@@ -15,6 +15,18 @@ st.set_page_config(
 )
 
 
+# En-tête de la barre latérale (identité de l'application).
+with st.sidebar:
+    st.markdown(
+        "<div style='font-size:1.4rem;font-weight:800;letter-spacing:-.5px;"
+        "background:linear-gradient(90deg,#3B82F6,#22C55E);-webkit-background-clip:text;"
+        "-webkit-text-fill-color:transparent;color:#3B82F6'>2SMART</div>"
+        "<div style='color:#94A3B8;font-size:.8rem;margin-bottom:.4rem'>"
+        "Plateforme HESS</div>",
+        unsafe_allow_html=True,
+    )
+
+
 # Menu organisé par sections. Les clés du dictionnaire deviennent des
 # séparateurs de section dans la barre latérale ; la section vide ("") place
 # l'accueil tout en haut, sans titre de section.
