@@ -25,7 +25,7 @@ st.markdown(
     .s2-hero-title{font-size:3.2rem;font-weight:800;letter-spacing:-1px;line-height:1;
       color:#3B82F6;background:linear-gradient(90deg,#3B82F6,#22C55E);
       -webkit-background-clip:text;-webkit-text-fill-color:transparent;margin:0}
-    .s2-hero-sub{font-size:1.15rem;color:#94A3B8;margin:.5rem 0 .3rem;font-weight:600}
+    .s2-hero-claim{font-size:1.3rem;color:#CBD5E1;margin:.6rem 0 .35rem;font-weight:600;line-height:1.35}
     .s2-hero-tags{font-size:.95rem;color:#3B82F6;font-weight:700;letter-spacing:.6px}
     .s2-kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:.2rem 0}
     .s2-kpi{border:1px solid rgba(128,128,128,.22);border-radius:14px;padding:16px 18px;
@@ -40,7 +40,6 @@ st.markdown(
       background:rgba(127,127,127,.05);height:100%}
     .s2-card .t{font-weight:700;font-size:1rem;margin-bottom:4px}
     .s2-card .d{color:#94A3B8;font-size:.9rem}
-    .s2-bar{color:#94A3B8;font-size:.9rem}
     @media(max-width:900px){.s2-kpi-grid{grid-template-columns:repeat(2,1fr)}
       .s2-hero-title{font-size:2.4rem}}
     </style>
@@ -130,14 +129,15 @@ st.markdown(
 )
 
 
-# Hero
+# Hero — une phrase qui donne immédiatement le sens du projet
 
 hero_g, hero_d = st.columns([1.25, 1])
 with hero_g:
     st.markdown(
         """
         <div class="s2-hero-title">2SMART</div>
-        <div class="s2-hero-sub">Plateforme d'IA semi-supervisée pour systèmes hybrides de stockage</div>
+        <div class="s2-hero-claim">Optimiser la répartition d'énergie entre deux batteries
+        hybrides grâce à l'IA explicable.</div>
         <div class="s2-hero-tags">Expliquer &nbsp;·&nbsp; Simuler &nbsp;·&nbsp; Comparer &nbsp;·&nbsp; Optimiser</div>
         """,
         unsafe_allow_html=True,
@@ -145,17 +145,54 @@ with hero_g:
     st.write("")
     b1, b2 = st.columns(2)
     with b1:
-        if st.button("Nouvelle simulation", type="primary", use_container_width=True):
-            st.switch_page("vues/8_Simulation_cycle_personnalise.py")
+        if st.button("🚀 Explorer une démonstration", type="primary", use_container_width=True):
+            st.switch_page("vues/5_Comparaison_des_strategies.py")
     with b2:
-        if st.button("Voir les modèles", use_container_width=True):
-            st.switch_page("vues/9_Architecture_des_modeles.py")
+        if st.button("🧪 Nouvelle simulation", use_container_width=True):
+            st.switch_page("vues/8_Simulation_cycle_personnalise.py")
 
 with hero_d:
     st.plotly_chart(_schema_hess(), use_container_width=True)
 
 
-# KPI
+# Le système, composant par composant (interactif)
+
+st.caption("Cliquez sur un composant pour comprendre son rôle dans le système.")
+
+comp1, comp2, comp3, comp4 = st.columns(4)
+with comp1:
+    with st.popover("🔋 Batterie Énergie", use_container_width=True):
+        st.markdown(
+            "**Batterie Énergie (EB)**\n\n"
+            "- Grande capacité de stockage\n"
+            "- Faible densité de puissance\n"
+            "- Assure l'autonomie du véhicule"
+        )
+with comp2:
+    with st.popover("⚡ Batterie Puissance", use_container_width=True):
+        st.markdown(
+            "**Batterie Puissance (PB)**\n\n"
+            "- Très forte puissance instantanée\n"
+            "- Répond aux pics de demande et au freinage\n"
+            "- Protège la batterie Énergie des sollicitations brutales"
+        )
+with comp3:
+    with st.popover("🔄 Convertisseur", use_container_width=True):
+        st.markdown(
+            "**Convertisseur**\n\n"
+            "- Répartit dynamiquement la puissance entre les deux batteries\n"
+            "- Possède ses propres limites de puissance à respecter"
+        )
+with comp4:
+    with st.popover("🚗 Moteur et véhicule", use_container_width=True):
+        st.markdown(
+            "**Moteur et véhicule**\n\n"
+            "- Le cycle de conduite impose à chaque instant une puissance demandée\n"
+            "- En freinage, le moteur renvoie de l'énergie à récupérer"
+        )
+
+
+# KPI, libellés orientés domaine
 
 n_strat, n_ia, n_pts = _kpis()
 pts_txt = f"{n_pts:,}".replace(",", " ") if n_pts else "—"
@@ -163,19 +200,43 @@ pts_txt = f"{n_pts:,}".replace(",", " ") if n_pts else "—"
 st.markdown(
     f"""
     <div class="s2-kpi-grid">
-      <div class="s2-kpi"><div class="n" style="color:{C_BLEU}">{n_strat}</div><div class="l">Stratégies EMS</div></div>
-      <div class="s2-kpi"><div class="n" style="color:{C_VERT}">{n_ia}</div><div class="l">Modèles IA</div></div>
-      <div class="s2-kpi"><div class="n" style="color:{C_ORANGE}">{pts_txt}</div><div class="l">Points simulés</div></div>
-      <div class="s2-kpi"><div class="n" style="color:{C_VERT}">100 %</div><div class="l">Décisions explicables</div></div>
+      <div class="s2-kpi"><div class="n" style="color:{C_BLEU}">{n_strat}</div><div class="l">Stratégies EMS disponibles</div></div>
+      <div class="s2-kpi"><div class="n" style="color:{C_VERT}">{n_ia}</div><div class="l">Modèles IA évalués</div></div>
+      <div class="s2-kpi"><div class="n" style="color:{C_ORANGE}">{pts_txt}</div><div class="l">Instants de conduite simulés</div></div>
+      <div class="s2-kpi"><div class="n" style="color:{C_VERT}">100 %</div><div class="l">Décisions expliquées</div></div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
 
-# Pipeline
+# Le défi : problème -> difficulté -> réponse
 
-st.subheader("Chaîne de traitement")
+st.subheader("Le défi")
+
+d1, d2, d3 = st.columns(3)
+with d1:
+    st.markdown(
+        f'<div class="s2-card"><div class="t" style="color:{C_BLEU}">Le problème</div>'
+        '<div class="d">Un véhicule électrique équipé de deux batteries complémentaires '
+        'doit décider, à chaque instant, laquelle fournit la puissance demandée.</div></div>',
+        unsafe_allow_html=True,
+    )
+with d2:
+    st.markdown(
+        f'<div class="s2-card"><div class="t" style="color:{C_ORANGE}">Pourquoi c\'est difficile</div>'
+        '<div class="d">Les objectifs sont multiples et contradictoires : autonomie, durée de '
+        'vie, rendement. Les contraintes physiques sont strictes et les cycles de conduite '
+        'très variables.</div></div>',
+        unsafe_allow_html=True,
+    )
+with d3:
+    st.markdown(
+        f'<div class="s2-card"><div class="t" style="color:{C_VERT}">La réponse de 2SMART</div>'
+        '<div class="d">Simuler le système, comparer sept stratégies de gestion d\'énergie, '
+        'et expliquer chaque décision — sous le contrôle d\'un filtre physique de sécurité.</div></div>',
+        unsafe_allow_html=True,
+    )
 
 etapes = ["Cycle", "Prétraitement", "Modèle IA", "Filtre physique", "Simulation", "Explicabilité"]
 pipe = '<div class="s2-pipe">'
@@ -187,18 +248,18 @@ pipe += "</div>"
 st.markdown(pipe, unsafe_allow_html=True)
 
 
-# Objectifs
+# Que vais-je obtenir ?
 
-st.subheader("Ce que fait la plateforme")
+st.subheader("Que vais-je obtenir ?")
 
-objectifs = [
-    ("Simuler", "Préparer un cycle de conduite et rejouer le comportement du HESS (SOC, puissances EB/PB).", C_BLEU),
-    ("Expliquer", "Justifier chaque décision de répartition en langage physique, modèle par modèle.", C_VERT),
-    ("Comparer", "Classer sept stratégies EMS sur des critères communs de sécurité, coût et équilibre.", C_ORANGE),
-    ("Optimiser", "Coupler règles expertes et apprentissage pour une décision sûre et interprétable.", C_ARDOISE),
+benefices = [
+    ("🧪 Simuler", "Observer la répartition de puissance sur un cycle de conduite complet.", C_BLEU),
+    ("📊 Comparer", "Identifier la stratégie la plus performante selon le critère qui vous importe.", C_ORANGE),
+    ("🧠 Expliquer", "Comprendre pourquoi une décision a été prise, à n'importe quel instant.", C_VERT),
+    ("⚙️ Optimiser", "Trouver le meilleur compromis entre performance et préservation des batteries.", C_ARDOISE),
 ]
-cols_obj = st.columns(4)
-for col, (titre, desc, coul) in zip(cols_obj, objectifs):
+cols_ben = st.columns(4)
+for col, (titre, desc, coul) in zip(cols_ben, benefices):
     with col:
         st.markdown(
             f'<div class="s2-card"><div class="t" style="color:{coul}">{titre}</div>'
@@ -207,46 +268,65 @@ for col, (titre, desc, coul) in zip(cols_obj, objectifs):
         )
 
 
-# Variable de décision
+# Valeur scientifique
 
-st.subheader("Variable de décision")
+st.subheader("Pourquoi 2SMART ?")
+
+with st.container(border=True):
+    st.markdown(
+        "- **IA hybride** : connaissances expertes de l'ontologie OntoHESS combinées à "
+        "l'apprentissage, via une approche **neuro-symbolique**\n"
+        "- **Respect des contraintes physiques** garanti par un filtre de sécurité en aval "
+        "de chaque décision\n"
+        "- **Explicabilité** des décisions, adaptée à la nature de chaque modèle\n"
+        "- **Comparaison** de sept stratégies EMS sur des critères communs\n"
+        "- **Validation par simulation** sur un cycle de conduite réel"
+    )
+
+
+# Comprendre la décision (équations repliées)
+
+st.subheader("Comprendre la décision")
 
 st.write(
     "À chaque instant, une stratégie choisit `alpha(t)` : la fraction de la puissance "
-    "demandée confiée à la batterie de puissance. La décision passe ensuite par un filtre "
-    "physique de sécurité."
+    "demandée confiée à la batterie de puissance. Tout le reste en découle."
 )
-eq1, eq2 = st.columns(2)
-with eq1:
-    st.latex(r"P_{PB} = \alpha \times P_{dem}")
-with eq2:
-    st.latex(r"P_{EB} = (1 - \alpha) \times P_{dem}")
+
+with st.expander("Voir le modèle mathématique"):
+    eq1, eq2 = st.columns(2)
+    with eq1:
+        st.latex(r"P_{PB} = \alpha \times P_{dem}")
+    with eq2:
+        st.latex(r"P_{EB} = (1 - \alpha) \times P_{dem}")
+    st.caption(
+        "alpha = 0 : toute la puissance vient de la batterie Énergie. "
+        "alpha = 1 : toute la puissance vient de la batterie Puissance. "
+        "La décision passe ensuite par le filtre physique de sécurité."
+    )
 
 
-# Deux modes
+# Que souhaitez-vous faire ?
 
-st.subheader("Deux modes d'utilisation")
+st.subheader("Que souhaitez-vous faire ?")
 
 mode1, mode2 = st.columns(2)
 with mode1:
     st.markdown(
-        f'<div class="s2-card"><div class="t" style="color:{C_BLEU}">Mode démonstration</div>'
-        '<div class="d">Résultats précalculés, chargement instantané. Comparaison, analyse '
-        'et explicabilité des sept stratégies. Idéal pour une soutenance.</div></div>',
+        f'<div class="s2-card"><div class="t" style="color:{C_BLEU}">Explorer une démonstration</div>'
+        '<div class="d">Résultats déjà calculés, affichage instantané. Comparaison, analyse '
+        'et explicabilité des sept stratégies.</div></div>',
         unsafe_allow_html=True,
     )
 with mode2:
     st.markdown(
-        f'<div class="s2-card"><div class="t" style="color:{C_VERT}">Mode simulation</div>'
-        '<div class="d">Import d\'un nouveau cycle et simulation complète. Temps de calcul '
-        'plus long, pour analyser un cycle inédit.</div></div>',
+        f'<div class="s2-card"><div class="t" style="color:{C_VERT}">Lancer une simulation</div>'
+        '<div class="d">Importer un nouveau cycle de conduite et simuler le système de bout '
+        'en bout. Temps de calcul plus long.</div></div>',
         unsafe_allow_html=True,
     )
 
 st.write("")
-
-
-# Accès
 
 acces1, acces2, acces3 = st.columns(3)
 with acces1:
