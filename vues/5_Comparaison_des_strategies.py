@@ -11,6 +11,8 @@ from core.resultats import (
     meilleure_strategie,
     nom_affichage,
     CRITERES,
+    EXPLICABILITE,
+    NIVEAUX_EXPLICABILITE,
 )
 
 
@@ -77,7 +79,8 @@ with col_hi:
         f"- Meilleur coût : **{nom_affichage(meilleure_strategie(metriques, 'Coût énergétique')[0])}**\n"
         f"- Meilleure sécurité : **{nom_affichage(meilleure_strategie(metriques, 'Sécurité physique')[0])}**\n"
         f"- Meilleur équilibre SOC : **{nom_affichage(meilleure_strategie(metriques, 'Équilibre EB/PB')[0])}**\n"
-        f"- Meilleure explicabilité : **{nom_affichage(meilleure_strategie(metriques, 'Explicabilité')[0])}**"
+        f"- Meilleur alignement au filtre : "
+        f"**{nom_affichage(meilleure_strategie(metriques, 'Alignement au filtre physique')[0])}**"
     )
 
 st.divider()
@@ -161,36 +164,59 @@ else:
     )
 
 
-# Meilleure stratégie pour CHAQUE critère (vue d'ensemble)
+# Toutes les stratégies, critère par critère (et non le seul gagnant)
 
-st.markdown("**Meilleure stratégie par critère**")
+st.subheader("Toutes les stratégies, critère par critère")
 
-POURQUOI = {
-    "Sécurité physique": "le moins de violations SOC",
-    "Coût énergétique": "coût physique minimal",
-    "Préservation EB": "SOC final EB le plus élevé",
-    "Préservation PB": "SOC final PB le plus élevé",
-    "Équilibre EB/PB": "déséquilibre SOC le plus faible",
-    "Performance globale": "coût physique minimal",
-    "Explicabilité": "le moins de corrections du filtre",
-}
-
-lignes_critere = []
-for crit in CRITERES:
-    cle_c, val_c = meilleure_strategie(metriques, crit)
-    metrique_c, _sens_c = CRITERES[crit]
+lignes_matrice = []
+for crit, (metrique_c, sens_c) in CRITERES.items():
     fmt_c = COLONNES.get(metrique_c, (crit, "{:.4f}"))[1]
-    lignes_critere.append(
+    vals = {n: metriques[n].get(metrique_c, float("nan")) for n in metriques}
+    finis = {n: v for n, v in vals.items() if v == v}
+    best = (min if sens_c == "min" else max)(finis, key=lambda n: finis[n]) if finis else None
+
+    ligne = {"Critère": crit}
+    for n in metriques:
+        v = vals[n]
+        texte = fmt_c.format(v) if v == v else "—"
+        if n == best:
+            texte += " ★"
+        ligne[nom_affichage(n)] = texte
+    lignes_matrice.append(ligne)
+
+st.dataframe(
+    pd.DataFrame(lignes_matrice).set_index("Critère"),
+    use_container_width=True,
+)
+st.caption(
+    f"Les {len(metriques)} stratégies sont affichées pour chaque critère. "
+    "★ = meilleure valeur du critère. Tous ces critères sont **mesurés** sur le cycle simulé."
+)
+
+
+# Explicabilité : propriété structurelle, déclarée et justifiée (jamais mesurée)
+
+st.subheader("Explicabilité des modèles")
+
+st.caption(
+    "L'explicabilité n'est pas une grandeur mesurable sur une trajectoire : c'est une "
+    "propriété de la structure du modèle. Elle est donc déclarée et justifiée ci-dessous, "
+    "et n'entre pas dans le classement chiffré."
+)
+
+lignes_x = []
+for n in metriques:
+    niveau, justification = EXPLICABILITE.get(n, (0, "—"))
+    lignes_x.append(
         {
-            "Critère": crit,
-            "Meilleure stratégie": nom_affichage(cle_c) if cle_c else "—",
-            "Valeur": fmt_c.format(val_c) if cle_c and val_c == val_c else "—",
-            "Pourquoi": POURQUOI.get(crit, ""),
+            "Stratégie": nom_affichage(n),
+            "Niveau": NIVEAUX_EXPLICABILITE.get(niveau, "—"),
+            "Pourquoi": justification,
         }
     )
 
 st.dataframe(
-    pd.DataFrame(lignes_critere).set_index("Critère"),
+    pd.DataFrame(lignes_x).set_index("Stratégie"),
     use_container_width=True,
 )
 

@@ -213,6 +213,7 @@ def statistiques_detaillees(donnees: dict) -> dict:
 
 
 # Critères de sélection : libellé -> (métrique, sens). "min" = plus bas = mieux.
+# Tous sont MESURÉS sur la trajectoire simulée.
 CRITERES = {
     "Sécurité physique": ("nb_violations", "min"),
     "Coût énergétique": ("cout_physique_moyen", "min"),
@@ -220,7 +221,59 @@ CRITERES = {
     "Préservation PB": ("soc_pb_final", "max"),
     "Équilibre EB/PB": ("desequilibre_soc_moyen", "min"),
     "Performance globale": ("cout_physique_moyen", "min"),
-    "Explicabilité": ("nb_corrections", "min"),  # proxy : moins de corrections = décision plus alignée
+    # Anciennement nommé « Explicabilité », ce qui était trompeur : le nombre de
+    # corrections mesure à quel point la décision respectait déjà la physique,
+    # pas la capacité du modèle à s'expliquer.
+    "Alignement au filtre physique": ("nb_corrections", "min"),
+}
+
+
+# L'explicabilité n'est PAS mesurable sur une trajectoire : c'est une propriété
+# de la STRUCTURE du modèle. Elle est donc déclarée et justifiée ici, jamais
+# calculée. Niveau : 3 = explicable par construction, 2 = partiellement
+# interprétable, 1 = boîte noire (explication seulement post-hoc).
+NIVEAUX_EXPLICABILITE = {
+    3: "Explicable par construction",
+    2: "Partiellement interprétable",
+    1: "Boîte noire (explication post-hoc)",
+}
+
+EXPLICABILITE = {
+    "EMS_power_limitation": (
+        3,
+        "Règle déterministe explicite : la décision se lit directement dans la règle, "
+        "mais il ne s'agit pas d'un modèle appris.",
+    ),
+    "EMS_fuzzy_logic": (
+        3,
+        "Règles floues expertes formalisées à partir de l'ontologie OntoHESS : "
+        "chaque règle activée et sa force sont lisibles.",
+    ),
+    "EMS_MLP_neurosymbolic": (
+        3,
+        "Neuro-symbolique : la décision part de la base floue issue de l'ontologie, "
+        "corrigée par une correction neuronale bornée — la décision reste traçable.",
+    ),
+    "EMS_LSTM_neurosymbolic": (
+        3,
+        "Neuro-symbolique temporel : états symboliques de l'ontologie en entrée et "
+        "correction bornée de la base floue.",
+    ),
+    "EMS_GNN": (
+        2,
+        "Le graphe reproduit la structure physique du HESS : l'importance de chaque "
+        "composant est interprétable, mais les poids appris restent opaques.",
+    ),
+    "EMS_MLP": (
+        1,
+        "Réseau dense opaque : aucune règle interne lisible, explication seulement "
+        "post-hoc (gradient × entrée).",
+    ),
+    "EMS_LSTM": (
+        1,
+        "Réseau récurrent opaque : explication seulement post-hoc sur la fenêtre "
+        "temporelle (gradient × entrée).",
+    ),
 }
 
 

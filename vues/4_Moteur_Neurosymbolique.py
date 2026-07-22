@@ -61,10 +61,27 @@ def _tag_decision(part_eb, part_pb, correction):
     return "soulage la batterie Énergie"
 
 
+def _sous_scores(valeurs):
+    """Normalise un critère « plus bas = mieux » en sous-score 0..1 (1 = meilleur)."""
+    finis = [v for v in valeurs.values() if v == v]
+    lo, hi = (min(finis), max(finis)) if finis else (0.0, 1.0)
+    out = {}
+    for nom, v in valeurs.items():
+        if v != v:
+            out[nom] = 0.0
+        elif hi - lo < 1e-12:
+            out[nom] = 1.0
+        else:
+            out[nom] = 1.0 - (v - lo) / (hi - lo)
+    return out
+
+
 def _classement(resultats, instant, p_dem):
-    """Classe les stratégies à cet instant par coût physique multi-objectif
-    (candidate_metrics) : plus bas = mieux. Score 0-100 normalisé entre elles."""
-    couts = {}
+    """Classe les stratégies à cet instant sur TROIS critères, chacun normalisé
+    entre les stratégies puis moyenné : coût physique multi-objectif
+    (candidate_metrics), respect du filtre (pas de correction), et équilibre des
+    SOC (|SOC_EB - SOC_PB|). Score global 0-100."""
+    couts, corrs, deseqs = {}, {}, {}
     for nom, tr in resultats.items():
         a = float(tr["alpha_final"][instant])
         se = float(tr["SOC_EB"][instant])
@@ -74,19 +91,25 @@ def _classement(resultats, instant, p_dem):
             couts[nom] = float(m["total_cost"][0])
         except Exception:  # noqa: BLE001
             couts[nom] = float("nan")
+        corrs[nom] = 1.0 if ("correction_applied" in tr and bool(tr["correction_applied"][instant])) else 0.0
+        deseqs[nom] = abs(se - sp)
 
-    finis = [c for c in couts.values() if c == c]
-    lo, hi = (min(finis), max(finis)) if finis else (0.0, 1.0)
+    s_cout = _sous_scores(couts)
+    s_corr = _sous_scores(corrs)
+    s_deseq = _sous_scores(deseqs)
 
     lignes = []
-    for nom, c in couts.items():
-        if c != c:
-            score = 0.0
-        elif hi - lo < 1e-12:
-            score = 100.0
-        else:
-            score = 100.0 * (hi - c) / (hi - lo)
-        lignes.append({"nom": nom, "cout": c, "score": score})
+    for nom in resultats:
+        score = 100.0 * (s_cout[nom] + s_corr[nom] + s_deseq[nom]) / 3.0
+        lignes.append(
+            {
+                "nom": nom,
+                "score": score,
+                "s_cout": s_cout[nom],
+                "s_deseq": s_deseq[nom],
+                "corr": corrs[nom],
+            }
+        )
     lignes.sort(key=lambda x: (-x["score"], x["nom"]))
     return lignes
 
@@ -114,7 +137,7 @@ if not resultats or df is None:
 
 st.caption(f"Source des données : {_source}")
 
-n = min(len(tr["P_EB"]) for tr in resultats.values())
+n = min([len(df)] + [len(tr["P_EB"]) for tr in resultats.values()])
 instant = st.slider("Instant du cycle à analyser", 0, n - 1, n // 2)
 
 ligne = df.iloc[instant]
@@ -241,6 +264,10 @@ for nom in noms:
 # Classement à cet instant
 
 st.subheader("🏆 Quelle stratégie est la plus performante ?")
+st.caption(
+    "Score multi-critères, chaque critère étant normalisé entre les stratégies : "
+    "coût physique, respect du filtre de sécurité, équilibre des états de charge."
+)
 
 if abs(p_dem) <= EPS_POWER_W:
     st.info("Demande quasi nulle à cet instant : le classement n'est pas significatif.")
@@ -272,16 +299,25 @@ else:
 st.subheader("📋 Verdict")
 if classement:
     meilleur = classement[0]
-    tr_b = resultats[meilleur["nom"]]
-    corr_b = bool(tr_b["correction_applied"][instant]) if "correction_applied" in tr_b else False
-    raisons = ["coût physique le plus faible à cet instant"]
-    if not corr_b:
-        raisons.append("décision acceptée sans correction du filtre")
+    raisons = []
+    if meilleur["s_cout"] >= 0.99:
+        raisons.append("coût physique le plus faible des sept stratégies")
+    elif meilleur["s_cout"] >= 0.6:
+        raisons.append("coût physique parmi les plus faibles")
+    if meilleur["corr"] == 0:
+        raisons.append("décision acceptée sans correction du filtre de sécurité")
+    if meilleur["s_deseq"] >= 0.99:
+        raisons.append("meilleur équilibre entre les deux batteries")
+    elif meilleur["s_deseq"] >= 0.6:
+        raisons.append("bon équilibre des états de charge")
+    if not raisons:
+        raisons.append("meilleur compromis sur l'ensemble des critères")
     with st.container(border=True):
         st.markdown(
-            f"À cet instant, **{len(classement)} stratégies** ont été comparées. "
-            f"La stratégie **{nom_affichage(meilleur['nom'])}** obtient le meilleur score "
-            f"({meilleur['score']:.0f}/100)."
+            f"À cet instant, **{len(classement)} stratégies** ont été comparées sur "
+            "**trois critères** : coût physique, respect du filtre de sécurité et "
+            f"équilibre des états de charge. La stratégie **{nom_affichage(meilleur['nom'])}** "
+            f"obtient le meilleur score global ({meilleur['score']:.0f}/100)."
         )
         st.markdown("Pourquoi :")
         for r in raisons:
