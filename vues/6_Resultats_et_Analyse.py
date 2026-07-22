@@ -1,9 +1,10 @@
 """
-Page « Explorer les résultats » — vue narrative sur l'ensemble du cycle.
+Page « Explorer les résultats » — orientée explication, pas visualisation.
 
-Plutôt que 14 000 points bruts, on raconte le cycle : points forts, tendances
-et profil de chaque stratégie, avec une analyse automatique à chaque étape et
-une synthèse finale. Les tableaux détaillés restent accessibles, mais repliés.
+La page ne cherche pas à montrer tout ce qui est calculable, mais à répondre à
+une question : pourquoi une stratégie offre-t-elle un meilleur compromis que
+les autres ? Le classement repose sur une somme de rangs (aucune note
+arbitraire, aucune normalisation inventée), ce qui le rend explicable.
 """
 
 import sys
@@ -30,13 +31,13 @@ from core.navigation import pied_navigation
 
 C_EB = "#3B82F6"
 C_PB = "#22C55E"
-C_GRIS = "#94A3B8"
+VERT_CLAIR = "background-color: rgba(34,197,94,.25)"
 
 
 st.title("📈 Explorer les résultats")
 st.caption(
-    "Que s'est-il passé sur l'ensemble du cycle ? Points forts, tendances et "
-    "profil de chaque stratégie, avec une analyse automatique à chaque étape."
+    "Pourquoi une stratégie offre-t-elle un meilleur compromis que les autres ? "
+    "Cette page explique les arbitrages réalisés par chacune sur l'ensemble du cycle."
 )
 
 
@@ -66,31 +67,65 @@ metriques = calculer_metriques(donnees)
 noms = list(resultats.keys())
 
 
-def _meilleur(cle, sens="max"):
-    """Stratégie optimisant une statistique (max = plus haut, min = plus bas)."""
-    paires = [(n, stats[n][cle]) for n in noms]
-    return (max if sens == "max" else min)(paires, key=lambda kv: kv[1])[0]
+# Critères de comparaison : (libellé, valeur par stratégie, sens)
+CRITERES_CYCLE = [
+    ("Préservation batterie Énergie", lambda n: stats[n]["soc_eb_final"], "max"),
+    ("Préservation batterie Puissance", lambda n: stats[n]["soc_pb_final"], "max"),
+    ("Stabilité du courant PB", lambda n: stats[n]["i_pb_rms"], "min"),
+    ("Respect des contraintes SOC", lambda n: metriques[n]["nb_violations"], "min"),
+]
 
 
-def _min_violations():
-    return min(noms, key=lambda n: metriques[n]["nb_violations"])
+def _rangs(valeur, sens):
+    """Rang 1..N sur un critère (1 = meilleur). Aucune note inventée."""
+    ordonnes = sorted(noms, key=valeur, reverse=(sens == "max"))
+    return {n: i + 1 for i, n in enumerate(ordonnes)}
 
 
-# Points forts du cycle
+rangs_par_critere = {lib: _rangs(val, sens) for lib, val, sens in CRITERES_CYCLE}
+somme_rangs = {n: sum(rangs_par_critere[lib][n] for lib, _, _ in CRITERES_CYCLE) for n in noms}
+classement = sorted(noms, key=lambda n: (somme_rangs[n], n))
+rang_final = {n: i + 1 for i, n in enumerate(classement)}
 
-st.subheader("🌟 Points forts du cycle")
+
+def _etoiles(rang):
+    """Étoiles dérivées du rang sur le critère (pas d'un score arbitraire)."""
+    return "★" * max(1, 6 - rang) + "☆" * (5 - max(1, 6 - rang))
+
+
+def _meilleur(libelle):
+    return min(noms, key=lambda n: rangs_par_critere[libelle][n])
+
+
+# 1. Résumé du cycle
+
+st.subheader("🌟 Résumé du cycle")
+
+best_eb = _meilleur("Préservation batterie Énergie")
+best_pb = _meilleur("Préservation batterie Puissance")
+best_i = _meilleur("Stabilité du courant PB")
+best_v = _meilleur("Respect des contraintes SOC")
 
 k1, k2, k3, k4 = st.columns(4)
-best_eb = _meilleur("soc_eb_final", "max")
-best_pb = _meilleur("soc_pb_final", "max")
-best_i = _meilleur("i_pb_rms", "min")
-best_v = _min_violations()
 k1.metric("Préserve le mieux l'EB", nom_affichage(best_eb), f"{stats[best_eb]['soc_eb_final'] * 100:.0f} %")
 k2.metric("Préserve le mieux la PB", nom_affichage(best_pb), f"{stats[best_pb]['soc_pb_final'] * 100:.0f} %")
-k3.metric("Courant PB le plus régulier", nom_affichage(best_i), f"{stats[best_i]['i_pb_rms']:.0f} A RMS")
-k4.metric("Le moins de violations SOC", nom_affichage(best_v), f"{metriques[best_v]['nb_violations']:.0f}")
+k3.metric("Courant PB le plus stable", nom_affichage(best_i), f"{stats[best_i]['i_pb_rms']:.0f} A RMS")
+k4.metric("Le moins de violations", nom_affichage(best_v), f"{metriques[best_v]['nb_violations']:.0f}")
 
-with st.expander("Voir le tableau détaillé (toutes les stratégies)"):
+_gagnants = {best_eb, best_pb, best_i, best_v}
+if len(_gagnants) > 1:
+    st.info(
+        f"**Aucune stratégie ne domine tous les critères** : {len(_gagnants)} stratégies "
+        "différentes arrivent en tête selon le critère considéré. Cette page explique "
+        "les compromis réalisés par chacune."
+    )
+else:
+    st.info(
+        f"**{nom_affichage(best_eb)}** arrive en tête sur les quatre critères, ce qui est "
+        "inhabituel : la suite détaille ses arbitrages."
+    )
+
+with st.expander("Voir le tableau détaillé de tous les indicateurs"):
     tableau = pd.DataFrame(
         {
             "Stratégie": [nom_affichage(n) for n in noms],
@@ -100,7 +135,7 @@ with st.expander("Voir le tableau détaillé (toutes les stratégies)"):
             "Énergie PB (Wh)": [stats[n]["energie_pb_wh"] for n in noms],
             "I_EB RMS (A)": [stats[n]["i_eb_rms"] for n in noms],
             "I_PB RMS (A)": [stats[n]["i_pb_rms"] for n in noms],
-            "P_EB max (kW)": [stats[n]["p_eb_max"] / 1000 for n in noms],
+            "I_PB max (A)": [stats[n]["i_pb_max"] for n in noms],
             "P_PB max (kW)": [stats[n]["p_pb_max"] / 1000 for n in noms],
             "Violations SOC": [metriques[n]["nb_violations"] for n in noms],
         }
@@ -108,12 +143,12 @@ with st.expander("Voir le tableau détaillé (toutes les stratégies)"):
     st.dataframe(tableau.style.format("{:.1f}"), use_container_width=True)
 
 
-# Évolution des états de charge
+# 2. Comment les batteries ont été utilisées ?
 
-st.subheader("📉 Comment évoluent les batteries ?")
+st.subheader("📉 Comment les batteries ont été utilisées ?")
 
 
-def _courbe_soc(cle_soc, titre, couleur_titre):
+def _courbe_soc(cle_soc, titre):
     fig = go.Figure()
     for n in noms:
         y = np.asarray(resultats[n][cle_soc], dtype=float) * 100.0
@@ -129,160 +164,159 @@ def _courbe_soc(cle_soc, titre, couleur_titre):
 
 col_eb, col_pb = st.columns(2)
 with col_eb:
-    st.plotly_chart(_courbe_soc("SOC_EB", "SOC batterie Énergie", C_EB), use_container_width=True)
+    st.plotly_chart(_courbe_soc("SOC_EB", "SOC batterie Énergie"), use_container_width=True)
 with col_pb:
-    st.plotly_chart(_courbe_soc("SOC_PB", "SOC batterie Puissance", C_PB), use_container_width=True)
+    st.plotly_chart(_courbe_soc("SOC_PB", "SOC batterie Puissance"), use_container_width=True)
 
-st.info(
-    f"Analyse automatique — SOC_EB final le plus élevé : **{nom_affichage(best_eb)}** "
-    f"({stats[best_eb]['soc_eb_final'] * 100:.0f} %). Plus une courbe descend, plus la "
-    "batterie a été sollicitée sur le cycle."
+# Vitesse de décharge de l'EB : écart entre SOC initial et SOC final, en points.
+_chute_eb = {
+    n: (float(resultats[n]["SOC_EB"][0]) - float(resultats[n]["SOC_EB"][-1])) * 100.0 for n in noms
+}
+_lent = min(noms, key=lambda n: _chute_eb[n])
+_rapide = max(noms, key=lambda n: _chute_eb[n])
+
+st.markdown("**Analyse automatique**")
+st.markdown(
+    f"Les courbes montrent que **{nom_affichage(_lent)}** décharge le plus lentement la "
+    f"batterie d'énergie ({_chute_eb[_lent]:.1f} points de SOC sur le cycle). À l'inverse, "
+    f"**{nom_affichage(_rapide)}** la sollicite le plus fortement "
+    f"({_chute_eb[_rapide]:.1f} points). Une pente plus faible traduit une meilleure "
+    "préservation de la batterie d'énergie."
 )
 
 
-# Répartition des puissances
+# 3. Comment la batterie Puissance est sollicitée ?
 
-st.subheader("⚡ Comment se répartit la puissance ?")
-
-
-def _boxplot(cle_p, titre):
-    fig = go.Figure()
-    for n in noms:
-        y = np.asarray(resultats[n][cle_p], dtype=float) / 1000.0
-        fig.add_trace(go.Box(y=y, name=nom_affichage(n), boxpoints=False))
-    fig.update_layout(title=titre, yaxis_title="Puissance (kW)", height=400, showlegend=False, margin=dict(t=50, b=40))
-    return fig
-
-
-col_peb, col_ppb = st.columns(2)
-with col_peb:
-    st.plotly_chart(_boxplot("P_EB", "Puissance batterie Énergie"), use_container_width=True)
-with col_ppb:
-    st.plotly_chart(_boxplot("P_PB", "Puissance batterie Puissance"), use_container_width=True)
-
-pb_max_strat = _meilleur("p_pb_max", "max")
-st.info(
-    "Analyse automatique — la boîte montre la dispersion : plus elle est haute, plus "
-    f"la batterie encaisse de pics. Pic de puissance PB le plus élevé : "
-    f"**{nom_affichage(pb_max_strat)}** ({stats[pb_max_strat]['p_pb_max'] / 1000:.1f} kW)."
+st.subheader("🔌 Comment la batterie Puissance est sollicitée ?")
+st.caption(
+    "C'est la batterie que l'on cherche à protéger : le courant efficace est "
+    "directement lié au vieillissement électrochimique."
 )
 
-
-# Sollicitation électrique (courants)
-
-st.subheader("🔌 Quelle sollicitation électrique ?")
-
-
-def _boxplot_courant(cle_i, titre):
-    fig = go.Figure()
-    for n in noms:
-        y = np.asarray(resultats[n][cle_i], dtype=float)
-        fig.add_trace(go.Box(y=y, name=nom_affichage(n), boxpoints=False))
-    fig.update_layout(title=titre, yaxis_title="Courant (A)", height=400, showlegend=False, margin=dict(t=50, b=40))
-    return fig
-
-
-col_ieb, col_ipb = st.columns(2)
-with col_ieb:
-    st.plotly_chart(_boxplot_courant("I_EB", "Courant batterie Énergie"), use_container_width=True)
-with col_ipb:
-    st.plotly_chart(_boxplot_courant("I_PB", "Courant batterie Puissance"), use_container_width=True)
-
-ipb_max_strat = _meilleur("i_pb_max", "max")
-st.info(
-    f"Analyse automatique — courant PB le plus régulier : **{nom_affichage(best_i)}**. "
-    f"Pic de courant PB le plus élevé : **{nom_affichage(ipb_max_strat)}** "
-    f"({stats[ipb_max_strat]['i_pb_max']:.0f} A). Un courant plus régulier ménage la batterie."
-)
-
-
-# Profil comparatif (radar)
-
-st.subheader("🧭 Profil comparatif des stratégies")
-
-AXES = [
-    ("SOC EB préservé", "soc_eb_final", "max"),
-    ("SOC PB préservé", "soc_pb_final", "max"),
-    ("Pics courant PB faibles", "i_pb_max", "min"),
-    ("Stabilité courant PB", "i_pb_rms", "min"),
-]
-
-
-def _score(valeurs, v, sens):
-    lo, hi = min(valeurs), max(valeurs)
-    if hi - lo < 1e-12:
-        return 5.0
-    x = (v - lo) / (hi - lo)
-    return round(5.0 * (x if sens == "max" else (1.0 - x)), 1)
-
-
-scores = {}
-for libelle, cle, sens in AXES:
-    vals = [stats[n][cle] for n in noms]
-    scores[libelle] = [_score(vals, stats[n][cle], sens) for n in noms]
-
-tableau_scores = pd.DataFrame(scores, index=[nom_affichage(n) for n in noms])
-tableau_scores["Score global"] = tableau_scores.mean(axis=1).round(1)
-
-fig_radar = go.Figure()
-for i, n in enumerate(noms):
-    fig_radar.add_trace(
-        go.Scatterpolar(
-            r=[scores[lib][i] for lib, _, _ in AXES],
-            theta=[lib for lib, _, _ in AXES],
-            fill="toself",
-            name=nom_affichage(n),
-        )
+fig_ipb = go.Figure()
+for n in noms:
+    fig_ipb.add_trace(
+        go.Box(y=np.asarray(resultats[n]["I_PB"], dtype=float), name=nom_affichage(n), boxpoints=False)
     )
-fig_radar.update_layout(
-    polar=dict(radialaxis=dict(range=[0, 5])),
-    height=500,
-    title="Profil comparatif (0 = faible, 5 = excellent)",
+fig_ipb.update_layout(
+    title="Courant batterie Puissance", yaxis_title="Courant (A)", height=420,
+    showlegend=False, margin=dict(t=50, b=40),
 )
-st.plotly_chart(fig_radar, use_container_width=True)
+st.plotly_chart(fig_ipb, use_container_width=True)
 
-with st.expander("Voir les scores par axe"):
-    st.dataframe(tableau_scores.style.format("{:.1f}"), use_container_width=True)
-
-
-# Verdict + à retenir
-
-st.subheader("📋 Verdict")
-
-meilleur_global = tableau_scores["Score global"].idxmax()
-score_global = tableau_scores["Score global"].max()
-with st.container(border=True):
+_ns = [n for n in noms if "neurosymbolic" in n]
+_non_ns = [n for n in noms if n not in _ns]
+st.markdown("**Analyse automatique**")
+if _ns and _non_ns:
+    _rms_ns = float(np.mean([stats[n]["i_pb_rms"] for n in _ns]))
+    _rms_autres = float(np.mean([stats[n]["i_pb_rms"] for n in _non_ns]))
+    _pic_ns = float(np.max([stats[n]["i_pb_max"] for n in _ns]))
+    _comparatif = "inférieur" if _rms_ns < _rms_autres else "supérieur"
     st.markdown(
-        f"Sur l'ensemble du cycle, **{meilleur_global}** obtient le meilleur profil global "
-        f"({score_global:.1f}/5)."
-    )
-    st.markdown("Points marquants :")
-    st.markdown(
-        f"- Préserve le mieux l'EB : **{nom_affichage(best_eb)}**\n"
-        f"- Préserve le mieux la PB : **{nom_affichage(best_pb)}**\n"
-        f"- Courant PB le plus régulier : **{nom_affichage(best_i)}**\n"
-        f"- Le moins de violations SOC : **{nom_affichage(best_v)}**"
+        f"Les stratégies neuro-symboliques présentent un courant efficace moyen de "
+        f"**{_rms_ns:.0f} A**, {_comparatif} à celui des autres stratégies "
+        f"(**{_rms_autres:.0f} A**), avec un pic maximal de {_pic_ns:.0f} A. "
+        f"Le courant le plus régulier revient à **{nom_affichage(best_i)}** "
+        f"({stats[best_i]['i_pb_rms']:.0f} A RMS), ce qui limite le stress électrochimique."
     )
 
-st.subheader("🎓 Ce qu'il faut retenir")
 
-ns_noms = [n for n in noms if "neurosymbolic" in n]
-soc_ns = np.mean([stats[n]["soc_eb_final"] for n in ns_noms]) if ns_noms else None
-soc_det = stats["EMS_power_limitation"]["soc_eb_final"] if "EMS_power_limitation" in stats else None
+# 4. Comparaison des stratégies (somme de rangs, sans note arbitraire)
 
-phrase = f"Sur ce cycle, aucune stratégie ne domine partout : le meilleur profil global est {meilleur_global}."
-if soc_ns is not None and soc_det is not None:
-    if soc_ns > soc_det:
-        phrase += (
-            " Les variantes neuro-symboliques préservent en moyenne mieux la batterie "
-            "d'énergie que la stratégie déterministe de référence."
-        )
+st.subheader("📊 Comparaison des stratégies")
+st.caption(
+    "Chaque stratégie est classée sur les quatre critères (rang 1 = meilleure), puis les "
+    "rangs sont additionnés. Aucun critère n'est privilégié et aucune note n'est inventée : "
+    "la somme de rangs la plus faible désigne le meilleur compromis."
+)
+
+comparatif = pd.DataFrame(
+    {
+        "Stratégie": [nom_affichage(n) for n in classement],
+        "SOC EB final (%)": [stats[n]["soc_eb_final"] * 100 for n in classement],
+        "SOC PB final (%)": [stats[n]["soc_pb_final"] * 100 for n in classement],
+        "I_PB RMS (A)": [stats[n]["i_pb_rms"] for n in classement],
+        "Violations SOC": [metriques[n]["nb_violations"] for n in classement],
+        "Somme des rangs": [somme_rangs[n] for n in classement],
+        "Rang": [rang_final[n] for n in classement],
+    }
+).set_index("Stratégie")
+
+
+def _surligner(col):
+    if col.name in ("SOC EB final (%)", "SOC PB final (%)"):
+        cible = col.max()
+    elif col.name in ("I_PB RMS (A)", "Violations SOC", "Somme des rangs", "Rang"):
+        cible = col.min()
     else:
-        phrase += (
-            " Ici, la stratégie déterministe de référence préserve autant ou mieux la "
-            "batterie d'énergie que les variantes neuro-symboliques."
+        return ["" for _ in col]
+    return [VERT_CLAIR if v == cible else "" for v in col]
+
+
+st.dataframe(
+    comparatif.style.apply(_surligner, axis=0).format(
+        {
+            "SOC EB final (%)": "{:.1f}",
+            "SOC PB final (%)": "{:.1f}",
+            "I_PB RMS (A)": "{:.0f}",
+            "Violations SOC": "{:.0f}",
+            "Somme des rangs": "{:.0f}",
+            "Rang": "{:.0f}",
+        }
+    ),
+    use_container_width=True,
+)
+
+
+# 5. Verdict expliqué (fusionne l'ancien verdict et « ce qu'il faut retenir »)
+
+gagnant = classement[0]
+
+st.subheader(f"🧠 Pourquoi {nom_affichage(gagnant)} offre le meilleur compromis ?")
+
+for libelle, valeur, sens in CRITERES_CYCLE:
+    r = rangs_par_critere[libelle][gagnant]
+    with st.container(border=True):
+        c_gauche, c_droite = st.columns([1, 3])
+        c_gauche.markdown(f"**{_etoiles(r)}**")
+        v = valeur(gagnant)
+        if "Préservation" in libelle:
+            texte_val = f"SOC final de {v * 100:.1f} %"
+        elif "courant" in libelle:
+            texte_val = f"{v:.0f} A RMS"
+        else:
+            texte_val = f"{v:.0f} violation(s)"
+        c_droite.markdown(f"**{libelle}** — rang {r} sur {len(noms)} · {texte_val}")
+
+st.markdown("**Pourquoi les autres ne l'emportent pas**")
+for n in classement[1:4]:
+    forces = [lib for lib, _, _ in CRITERES_CYCLE if rangs_par_critere[lib][n] == 1]
+    faiblesses = sorted(
+        [(rangs_par_critere[lib][n], lib) for lib, _, _ in CRITERES_CYCLE], reverse=True
+    )[0]
+    txt_force = ", ".join(forces) if forces else "aucun critère en tête"
+    st.markdown(
+        f"- **{nom_affichage(n)}** → en tête sur : {txt_force} ; mais rang "
+        f"{faiblesses[0]} sur « {faiblesses[1]} »."
+    )
+
+with st.container(border=True):
+    st.markdown("**🧠 Explication de la décision**")
+    st.markdown(
+        f"**{nom_affichage(gagnant)}** n'a pas été retenu parce qu'il possède la meilleure "
+        "valeur sur un unique indicateur, mais parce qu'il obtient la somme de rangs la plus "
+        f"faible ({somme_rangs[gagnant]}) sur les quatre critères réunis :"
+    )
+    st.markdown(
+        "\n".join(
+            f"- {lib} : rang {rangs_par_critere[lib][gagnant]}" for lib, _, _ in CRITERES_CYCLE
         )
-st.info(phrase)
+    )
+    st.markdown(
+        "La décision résulte donc d'un **compromis entre plusieurs objectifs**, et non de "
+        "l'optimisation d'un seul critère. Une autre stratégie peut rester préférable si "
+        "un objectif précis prime — le tableau ci-dessus permet de le vérifier critère par critère."
+    )
 
 
 pied_navigation("vues/6_Resultats_et_Analyse.py")
