@@ -290,6 +290,76 @@ def _graphe_gnn(pct_g, edge):
     return fig
 
 
+def _graphe_connaissances(etat_actif):
+    """Sous-graphe de l'ontologie : individus réellement déclarés dans OntoHESS2.owl,
+    reliés par leurs relations. Seul l'état inféré à cet instant est mis en avant."""
+    noeuds = {
+        "hess1": (0.0, 2.0, "Système HESS"),
+        "batteryE1": (-1.6, 1.0, "Batterie Énergie"),
+        "batteryP1": (0.0, 1.0, "Batterie Puissance"),
+        "converter1": (1.6, 1.0, "Convertisseur"),
+        "load1": (1.6, 0.0, "Charge (moteur)"),
+        "state_Normal": (-1.6, -1.0, "Normal"),
+        "state_Overload_High": (0.0, -1.0, "Surcharge traction"),
+        "state_Overload_Low": (1.6, -1.0, "Surcharge récup."),
+    }
+    aretes = [
+        ("hess1", "batteryE1", "isComposedOf"),
+        ("hess1", "batteryP1", "isComposedOf"),
+        ("hess1", "converter1", "isComposedOf"),
+        ("converter1", "load1", "powers"),
+        ("hess1", "state_Normal", "triggersState"),
+        ("hess1", "state_Overload_High", "triggersState"),
+        ("hess1", "state_Overload_Low", "triggersState"),
+    ]
+
+    fig = go.Figure()
+    for a, b in ((x, y) for x, y, _ in aretes):
+        fig.add_trace(
+            go.Scatter(
+                x=[noeuds[a][0], noeuds[b][0]],
+                y=[noeuds[a][1], noeuds[b][1]],
+                mode="lines",
+                line=dict(color="#F59E0B" if b == etat_actif else "#D2D6DE",
+                          width=3 if b == etat_actif else 1.5),
+                hoverinfo="skip",
+                showlegend=False,
+            )
+        )
+
+    couleurs, tailles, textes = [], [], []
+    for cle, (_x, _y, libelle) in noeuds.items():
+        est_etat = cle.startswith("state_")
+        if est_etat:
+            couleurs.append("#F59E0B" if cle == etat_actif else "#E2E5EA")
+            tailles.append(38 if cle == etat_actif else 24)
+        else:
+            couleurs.append("#3B82F6")
+            tailles.append(30)
+        textes.append(f"{libelle}<br><span style='font-size:9px'>{cle}</span>")
+
+    fig.add_trace(
+        go.Scatter(
+            x=[v[0] for v in noeuds.values()],
+            y=[v[1] for v in noeuds.values()],
+            mode="markers+text",
+            marker=dict(size=tailles, color=couleurs, line=dict(color="white", width=2)),
+            text=textes,
+            textposition="bottom center",
+            textfont=dict(size=10),
+            hoverinfo="text",
+            showlegend=False,
+        )
+    )
+    fig.update_layout(
+        height=380,
+        margin=dict(t=10, b=10, l=10, r=10),
+        xaxis=dict(visible=False, range=[-2.6, 2.8]),
+        yaxis=dict(visible=False, range=[-1.9, 2.5]),
+    )
+    return fig
+
+
 def _etapes_raisonnement(mode, p_dem, soc_eb, soc_pb, part_eb, part_pb, correction):
     etapes = [f"Situation : {mode.lower()}, puissance demandée {abs(p_dem) / 1000.0:.1f} kW"]
     if abs(p_dem) <= EPS_POWER_W:
@@ -509,6 +579,15 @@ with tab_raison:
         "seuils fixes de ces mêmes règles."
     )
 
+    st.subheader("Sous-graphe de connaissances")
+    _interp_g = ox.interpretation_ontologique(p_dem, soc_eb, soc_pb)
+    st.plotly_chart(_graphe_connaissances(_interp_g["etat"]), use_container_width=True)
+    st.caption(
+        f"Individus et relations réellement déclarés dans l'ontologie. L'état "
+        f"**{ox.ETATS_ONTOLOGIE[_interp_g['etat']]}** (`{_interp_g['etat']}`) est celui "
+        "inféré à cet instant ; les autres états restent grisés."
+    )
+
     st.subheader("Fil du raisonnement")
     _timeline(_etapes_raisonnement(mode, p_dem, soc_eb, soc_pb, part_eb, part_pb, correction))
 
@@ -562,9 +641,35 @@ with tab_raison:
         fig_r = go.Figure(go.Bar(x=list(FUZZY_RULE_NAMES), y=forces, marker_color=C_EB))
         fig_r.update_layout(title="Force de chaque règle (0 à 1)", yaxis_title="Force", height=320, margin=dict(t=40, b=80))
         st.plotly_chart(fig_r, use_container_width=True)
-        actives = [(FUZZY_RULE_NAMES[i], forces[i]) for i in range(len(FUZZY_RULE_NAMES)) if forces[i] > 0.05]
-        for nom_r, f in sorted(actives, key=lambda x: x[1], reverse=True):
-            st.markdown(f"- **{RULE_LABELS_FR.get(nom_r, nom_r)}** — force {f * 100:.0f} %")
+
+        actives = sorted(
+            [(FUZZY_RULE_NAMES[i], forces[i]) for i in range(len(FUZZY_RULE_NAMES)) if forces[i] > 0.05],
+            key=lambda x: x[1],
+            reverse=True,
+        )
+
+        # Règle dominante mise en avant en langage naturel, puis les secondaires.
+        _dominante = str(res["dominant_rule"][0]) if "dominant_rule" in res else None
+        if _dominante and _dominante in RULE_LABELS_FR:
+            _force_dom = float(forces[list(FUZZY_RULE_NAMES).index(_dominante)]) if _dominante in FUZZY_RULE_NAMES else 0.0
+            with st.container(border=True):
+                st.markdown("**Règle dominante**")
+                _libelle_dom = RULE_LABELS_FR[_dominante]
+                # Élision : « décide d'orienter » et non « décide de orienter ».
+                _de = "d'" if _libelle_dom[:1].lower() in "aeiouéèêàâîôû" else "de "
+                st.markdown(f"Le système décide {_de}{_libelle_dom}.")
+                st.progress(min(1.0, _force_dom), text=f"Activation : {_force_dom * 100:.0f} %")
+                st.caption(f"Identifiant interne : `{_dominante}`")
+        elif not actives:
+            st.info(
+                "Aucune règle ne se détache : le système applique la répartition par défaut."
+            )
+
+        _secondaires = [(n, f) for n, f in actives if n != _dominante]
+        if _secondaires:
+            st.markdown("**Autres règles activées**")
+            for nom_r, f in _secondaires:
+                st.markdown(f"- {RULE_LABELS_FR.get(nom_r, nom_r)} — {f * 100:.0f} %")
 
     elif strategie == "EMS_MLP":
         st.markdown(
@@ -585,6 +690,7 @@ with tab_raison:
         fig_f.update_layout(title="Influence de chaque entrée sur alpha", yaxis_title="Contribution", height=320, margin=dict(t=40, b=40))
         st.plotly_chart(fig_f, use_container_width=True)
         st.caption("Bleu = pousse vers plus de PB ; rouge = pousse vers plus d'EB.")
+        st.info(ox.expliquer_importances([LABELS_FEATURES[c] for c in MLP_INPUT_COLS], contrib))
 
     elif strategie == "EMS_MLP_neurosymbolic":
         st.markdown(
@@ -617,6 +723,25 @@ with tab_raison:
         fig_l = go.Figure(go.Bar(x=[labels[i] for i in ordre], y=[pct[i] for i in ordre], marker_color=C_EB))
         fig_l.update_layout(title="Importance des entrées (%)", yaxis_title="%", height=340, margin=dict(t=40, b=110))
         st.plotly_chart(fig_l, use_container_width=True)
+        st.info(ox.expliquer_importances(labels, imp))
+
+        # Lecture temporelle : sur quelle partie de la fenêtre la décision se joue-t-elle ?
+        _fen = _fenetre_lstm(cols, instant, df, traj)
+        _poids_temps = np.abs(_fen - _fen.mean(axis=0, keepdims=True)).sum(axis=1)
+        if _poids_temps.sum() > 0:
+            _recent = float(_poids_temps[-7:].sum() / _poids_temps.sum() * 100.0)
+            if _recent >= 60:
+                st.caption(
+                    f"La fenêtre bouge surtout sur ses **7 dernières secondes** "
+                    f"({_recent:.0f} % de la variation) : la décision dépend d'un "
+                    "changement récent."
+                )
+            else:
+                st.caption(
+                    f"La variation est répartie sur toute la fenêtre de {LSTM_WINDOW} s "
+                    f"({_recent:.0f} % seulement sur les 7 dernières secondes) : le "
+                    "régime est resté stable."
+                )
 
     elif strategie == "EMS_GNN":
         st.markdown(
@@ -635,6 +760,15 @@ with tab_raison:
         total_g = imp_g.sum()
         pct_g = imp_g / total_g * 100.0 if total_g > 0 else imp_g
         st.plotly_chart(_graphe_gnn(pct_g, edge), use_container_width=True)
+        _noms_noeuds = [LABELS_NOEUDS.get(n, n) for n in GNN_NODE_NAMES]
+        st.info(ox.expliquer_importances(_noms_noeuds, pct_g))
+        _ordre_g = list(np.argsort(pct_g)[::-1])
+        if len(_ordre_g) >= 2:
+            st.caption(
+                f"L'interaction **{_noms_noeuds[_ordre_g[0]]} → "
+                f"{_noms_noeuds[_ordre_g[1]]}** concentre l'essentiel de la décision "
+                f"({pct_g[_ordre_g[0]] + pct_g[_ordre_g[1]]:.0f} % à elles deux)."
+            )
         st.caption("Topologie schématique ; les couleurs représentent l'importance calculée à cet instant.")
 
     else:
