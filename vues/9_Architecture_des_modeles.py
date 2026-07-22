@@ -4,20 +4,56 @@ from pathlib import Path
 DOSSIER_PROJET = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_PROJET))
 
+import pandas as pd
 import streamlit as st
 
 import ems_core as core
-from core.resultats import nom_affichage
+from core.resultats import nom_affichage, EXPLICABILITE
 
 
 # Configuration de page gérée par le routeur Accueil.py.
 
-st.title("Architecture des modèles")
+st.title("🧠 Les modèles d'IA")
 
 st.markdown(
-    "*Les sept stratégies décident toutes de la même variable : le coefficient "
-    "`alpha(t)`, fraction de la puissance demandée confiée à la batterie de "
-    "puissance. Elles diffèrent par la façon dont elles calculent cette valeur.*"
+    "*Toutes les stratégies poursuivent le même objectif : déterminer le coefficient "
+    "`alpha(t)` qui répartit la puissance demandée entre la batterie Énergie et la "
+    "batterie Puissance. Elles emploient des mécanismes décisionnels différents — "
+    "physiques, symboliques, neuronaux ou neuro-symboliques — tout en s'appuyant sur "
+    "les mêmes connaissances métier issues de l'ontologie OntoHESS.*"
+)
+
+
+# Architecture globale : situer l'ontologie AVANT les modèles
+
+st.subheader("Architecture globale de décision")
+
+_ETAPES_ARCHI = [
+    ("Cycle de conduite", "#6B7280"),
+    ("Variables physiques", "#6B7280"),
+    ("Ontologie OntoHESS", "#F59E0B"),
+    ("Connaissances métier", "#F59E0B"),
+    ("Règles expertes", "#F59E0B"),
+    ("Modèle EMS", "#3B82F6"),
+    ("Filtre physique", "#22C55E"),
+    ("Répartition EB / PB", "#22C55E"),
+]
+
+_flux = "<div style='display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:.3rem 0'>"
+for _i, (_etape, _coul) in enumerate(_ETAPES_ARCHI):
+    _flux += (
+        f"<span style='border:1px solid {_coul};color:{_coul};border-radius:9px;"
+        f"padding:6px 11px;font-weight:600;font-size:.86rem'>{_etape}</span>"
+    )
+    if _i < len(_ETAPES_ARCHI) - 1:
+        _flux += "<span style='color:#94A3B8;font-weight:800'>&#8594;</span>"
+_flux += "</div>"
+st.markdown(_flux, unsafe_allow_html=True)
+
+st.caption(
+    "L'ontologie intervient **avant** les modèles : elle fournit les concepts métier "
+    "et les règles sur lesquels s'appuient la logique floue et les variantes "
+    "neuro-symboliques."
 )
 
 eq1, eq2 = st.columns(2)
@@ -67,8 +103,10 @@ FICHES = {
         "fonctionnement": [
             "Sept règles pondérées combinent des concepts flous : SOC faible, "
             "forte traction, freinage régénératif, etc.",
-            "Les concepts ont été formalisés hors ligne à partir de l'ontologie "
-            "OntoHESS.",
+            "L'ontologie OntoHESS formalise ces concepts métier (seuils de SOC, "
+            "conditions de surcharge, états de fonctionnement) et les grandeurs "
+            "qu'ils comparent ; ils alimentent directement les règles floues du "
+            "moteur d'inférence. La logique floue ne sort donc pas de nulle part.",
             "Le moteur d'inférence agrège les règles activées puis défuzzifie "
             "pour produire un alpha continu.",
         ],
@@ -102,8 +140,9 @@ FICHES = {
             "correction delta ajoutée à la sortie de la logique floue.",
             f"La correction est bornée : delta = {core.MLP_NS_MAX_DELTA} × tanh(...), "
             "puis alpha final est ramené dans l'intervalle [0, 1].",
-            "On garde ainsi la lisibilité de la règle floue, ajustée à la marge "
-            "par le réseau.",
+            "Les états symboliques reçus en entrée sont déduits des concepts définis "
+            "dans l'ontologie OntoHESS. Le réseau apprend donc uniquement à ajuster "
+            "une décision déjà cohérente avec les connaissances expertes.",
         ],
         "entrees": (
             "État instantané, sortie de la logique floue, états symboliques et "
@@ -137,10 +176,11 @@ FICHES = {
         "fonctionnement": [
             f"Même architecture récurrente que le LSTM (fenêtre de "
             f"{core.LSTM_WINDOW} instants).",
-            "Les entrées incluent en plus des états symboliques : forte demande, "
-            "freinage régénératif, demande nulle, risque convertisseur.",
+            "Les entrées incluent en plus des états symboliques déduits de "
+            "l'ontologie : forte demande, freinage régénératif, demande nulle, "
+            "risque convertisseur.",
             "La prédiction temporelle est corrigée par la composante symbolique "
-            "issue de la logique floue.",
+            "issue de la logique floue, elle-même fondée sur OntoHESS.",
         ],
         "entrees": ", ".join(core.LSTM_NS_FEATURE_COLS),
     },
@@ -186,9 +226,90 @@ for cle in core.MODEL_ORDER:
 
 st.divider()
 
+
+# Rôle de l'ontologie dans la chaîne de décision
+
+st.subheader("Comment intervient l'ontologie ?")
+
+st.dataframe(
+    pd.DataFrame(
+        [
+            {
+                "Étape": "Variables physiques",
+                "Rôle d'OntoHESS": "Décrit les composants du HESS (batteries, convertisseur, charge) et leurs grandeurs.",
+            },
+            {
+                "Étape": "Concepts métier",
+                "Rôle d'OntoHESS": "Définit les seuils et les états de fonctionnement : state_Normal, state_Overload_High, state_Overload_Low.",
+            },
+            {
+                "Étape": "Règles expertes",
+                "Rôle d'OntoHESS": "Fournit les règles SWRL comparant puissance et SOC aux seuils déclarés.",
+            },
+            {
+                "Étape": "Modèles neuro-symboliques",
+                "Rôle d'OntoHESS": "Génère les états symboliques utilisés comme entrées supplémentaires du réseau.",
+            },
+            {
+                "Étape": "Explicabilité",
+                "Rôle d'OntoHESS": "Justifie la décision avec des concepts métier compréhensibles et des règles traçables.",
+            },
+        ]
+    ).set_index("Étape"),
+    use_container_width=True,
+)
+
+st.caption(
+    "Les noms de concepts cités sont ceux réellement déclarés dans "
+    "ontologies/OntoHESS2.owl. Voir la page « Base de connaissances » pour le "
+    "raisonnement pas à pas."
+)
+
+
+# Synthèse comparative des familles
+
+st.subheader("Comparaison des familles de stratégies")
+
+_NIVEAU_TEXTE = {3: "Par construction", 2: "Partielle", 1: "Post-hoc"}
+
+_COMPARAISON = {
+    "EMS_power_limitation": ("Non", "Non", "Oui — règles SWRL de l'OWL"),
+    "EMS_fuzzy_logic": ("Non", "Non", "Oui — concepts et seuils"),
+    "EMS_MLP": ("Oui", "Non", "Non"),
+    "EMS_LSTM": ("Oui", f"Oui — fenêtre de {core.LSTM_WINDOW} instants", "Non"),
+    "EMS_MLP_neurosymbolic": ("Oui", "Non", "Oui — états symboliques"),
+    "EMS_LSTM_neurosymbolic": ("Oui", f"Oui — fenêtre de {core.LSTM_WINDOW} instants", "Oui — états symboliques"),
+    "EMS_GNN": ("Oui", "Structure du graphe", "Partiel — topologie du HESS"),
+}
+
+_lignes_comp = []
+for cle in core.MODEL_ORDER:
+    if cle not in _COMPARAISON:
+        continue
+    apprentissage, memoire, ontologie = _COMPARAISON[cle]
+    niveau, _ = EXPLICABILITE.get(cle, (0, ""))
+    _lignes_comp.append(
+        {
+            "Stratégie": nom_affichage(cle),
+            "Apprentissage": apprentissage,
+            "Mémoire temporelle": memoire,
+            "Ontologie": ontologie,
+            "Explicabilité": _NIVEAU_TEXTE.get(niveau, "—"),
+        }
+    )
+
+st.dataframe(pd.DataFrame(_lignes_comp).set_index("Stratégie"), use_container_width=True)
+
+st.info(
+    "Le modèle physique n'est pas dépourvu d'ontologie : ses branches de décision "
+    "(l'EB fournit seule, la PB complète, l'EB est protégée) correspondent aux règles "
+    "SWRL déclarées dans OntoHESS2.owl. C'est vérifiable dans la page "
+    "« Pourquoi cette décision ? »."
+)
+
 st.caption(
     "Les modèles neuronaux ont été entraînés hors ligne ; l'application charge "
-    "leurs poids et rejoue leurs décisions. Les variantes neurosymboliques "
+    "leurs poids et rejoue leurs décisions. Les variantes neuro-symboliques "
     "réutilisent la logique floue comme socle interprétable."
 )
 
