@@ -5,6 +5,7 @@ DOSSIER_PROJET = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_PROJET))
 
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
@@ -61,8 +62,25 @@ def _tag_decision(part_eb, part_pb, correction):
     return "soulage la batterie Énergie"
 
 
-def _sous_scores(valeurs):
-    """Normalise un critère « plus bas = mieux » en sous-score 0..1 (1 = meilleur)."""
+# Indice multicritère évalué à un instant donné. Chaque composante est calculée
+# depuis la trajectoire ; les poids sont explicites et affichés à l'utilisateur.
+# Le « temps de calcul » est volontairement absent : ce n'est pas une propriété
+# de l'instant, et aucune mesure fiable par stratégie n'existe dans le fichier
+# précalculé — l'inventer fausserait le classement.
+CRITERES_INSTANT = [
+    ("Respect des contraintes physiques", 25),
+    ("Qualité de service (demande satisfaite)", 20),
+    ("Coût énergétique", 20),
+    ("Intervention du filtre de sécurité", 15),
+    ("Préservation et équilibre des batteries", 10),
+    ("Stabilité de la décision", 5),
+    ("Cohérence avec les règles expertes", 5),
+]
+
+
+def _norm_min(valeurs):
+    """Normalise un critère « plus bas = mieux » en sous-score 0..1 (1 = meilleur),
+    relativement aux stratégies comparées à cet instant."""
     finis = [v for v in valeurs.values() if v == v]
     lo, hi = (min(finis), max(finis)) if finis else (0.0, 1.0)
     out = {}
@@ -76,42 +94,79 @@ def _sous_scores(valeurs):
     return out
 
 
-def _classement(resultats, instant, p_dem):
-    """Classe les stratégies à cet instant sur TROIS critères, chacun normalisé
-    entre les stratégies puis moyenné : coût physique multi-objectif
-    (candidate_metrics), respect du filtre (pas de correction), et équilibre des
-    SOC (|SOC_EB - SOC_PB|). Score global 0-100."""
-    couts, corrs, deseqs = {}, {}, {}
+def _evaluer(resultats, instant, p_dem, accel):
+    """Évalue chaque stratégie à cet instant sur les sept critères pondérés.
+
+    Retourne (points, total) où points[stratégie][critère] est le nombre de
+    points obtenus sur le poids du critère.
+    """
+    brut = {}
     for nom, tr in resultats.items():
-        a = float(tr["alpha_final"][instant])
         se = float(tr["SOC_EB"][instant])
         sp = float(tr["SOC_PB"][instant])
+        a = float(tr["alpha_final"][instant])
+        a_req = float(tr["alpha_requested"][instant]) if "alpha_requested" in tr else a
+        a_prev = float(tr["alpha_final"][instant - 1]) if instant > 0 else a
+
         try:
             m = core.candidate_metrics(np.array([a]), p_dem, se, sp, None)
-            couts[nom] = float(m["total_cost"][0])
+            cout = float(m["total_cost"][0])
         except Exception:  # noqa: BLE001
-            couts[nom] = float("nan")
-        corrs[nom] = 1.0 if ("correction_applied" in tr and bool(tr["correction_applied"][instant])) else 0.0
-        deseqs[nom] = abs(se - sp)
+            cout = float("nan")
 
-    s_cout = _sous_scores(couts)
-    s_corr = _sous_scores(corrs)
-    s_deseq = _sous_scores(deseqs)
+        try:
+            a_fuzzy = float(
+                alpha_fuzzy_calc(
+                    np.array([se]), np.array([sp]), np.array([p_dem]), np.array([accel])
+                )["alpha"][0]
+            )
+        except Exception:  # noqa: BLE001
+            a_fuzzy = a
 
-    lignes = []
-    for nom in resultats:
-        score = 100.0 * (s_cout[nom] + s_corr[nom] + s_deseq[nom]) / 3.0
-        lignes.append(
-            {
-                "nom": nom,
-                "score": score,
-                "s_cout": s_cout[nom],
-                "s_deseq": s_deseq[nom],
-                "corr": corrs[nom],
-            }
-        )
-    lignes.sort(key=lambda x: (-x["score"], x["nom"]))
-    return lignes
+        corrige = "correction_applied" in tr and bool(tr["correction_applied"][instant])
+        brut[nom] = {
+            "faisable": bool(tr["feasible"][instant]) if "feasible" in tr else True,
+            "violation": bool(tr["soc_violation"][instant]) if "soc_violation" in tr else False,
+            "service": abs(float(tr["P_unserved"][instant])) + abs(float(tr["P_regen_curtailed"][instant]))
+            if ("P_unserved" in tr and "P_regen_curtailed" in tr)
+            else 0.0,
+            "cout": cout,
+            "filtre": abs(a - a_req) + (1.0 if corrige else 0.0),
+            "equilibre": abs(se - sp),
+            "stabilite": abs(a - a_prev),
+            "expert": abs(a - a_fuzzy),
+        }
+
+    s_service = _norm_min({n: b["service"] for n, b in brut.items()})
+    s_cout = _norm_min({n: b["cout"] for n, b in brut.items()})
+    s_filtre = _norm_min({n: b["filtre"] for n, b in brut.items()})
+    s_equil = _norm_min({n: b["equilibre"] for n, b in brut.items()})
+    s_stab = _norm_min({n: b["stabilite"] for n, b in brut.items()})
+    s_exp = _norm_min({n: b["expert"] for n, b in brut.items()})
+
+    points, total = {}, {}
+    for nom, b in brut.items():
+        # Critère de sécurité noté en ABSOLU : une stratégie ne mérite pas la
+        # note maximale simplement parce que les autres font pire.
+        if not b["faisable"]:
+            p_phys = 0.0
+        elif b["violation"]:
+            p_phys = 25 * 0.5
+        else:
+            p_phys = 25.0
+
+        points[nom] = {
+            "Respect des contraintes physiques": p_phys,
+            "Qualité de service (demande satisfaite)": 20 * s_service[nom],
+            "Coût énergétique": 20 * s_cout[nom],
+            "Intervention du filtre de sécurité": 15 * s_filtre[nom],
+            "Préservation et équilibre des batteries": 10 * s_equil[nom],
+            "Stabilité de la décision": 5 * s_stab[nom],
+            "Cohérence avec les règles expertes": 5 * s_exp[nom],
+        }
+        total[nom] = sum(points[nom].values())
+
+    return points, total
 
 
 st.title("📊 Analyse instantanée")
@@ -263,20 +318,24 @@ for nom in noms:
 
 # Classement à cet instant
 
-st.subheader("🏆 Quelle stratégie est la plus performante ?")
+st.subheader("🏆 Quelle stratégie est la plus adaptée à cet instant ?")
 st.caption(
-    "Score multi-critères, chaque critère étant normalisé entre les stratégies : "
-    "coût physique, respect du filtre de sécurité, équilibre des états de charge."
+    "Indice multicritère pondéré, calculé sur l'état du système à cet instant. "
+    "Sauf le critère de sécurité (noté en absolu), chaque critère est normalisé "
+    "entre les stratégies comparées."
 )
 
 if abs(p_dem) <= EPS_POWER_W:
-    st.info("Demande quasi nulle à cet instant : le classement n'est pas significatif.")
+    st.info("Demande quasi nulle à cet instant : l'évaluation n'est pas significative.")
     classement = []
+    points_crit = {}
 else:
-    classement = _classement(resultats, instant, p_dem)
+    points_crit, totaux = _evaluer(resultats, instant, p_dem, accel)
+    classement = sorted(totaux.items(), key=lambda kv: (-kv[1], kv[0]))
+
     cols = st.columns(len(classement))
-    for col, item, medaille in zip(cols, classement, MEDAILLES):
-        tr = resultats[item["nom"]]
+    for col, (nom_c, score_c), medaille in zip(cols, classement, MEDAILLES):
+        tr = resultats[nom_c]
         p_eb = float(tr["P_EB"][instant])
         p_pb = float(tr["P_PB"][instant])
         corr = bool(tr["correction_applied"][instant]) if "correction_applied" in tr else False
@@ -287,41 +346,68 @@ else:
             with st.container(border=True):
                 st.markdown(
                     f"<div style='text-align:center;font-size:22px'>{medaille}</div>"
-                    f"<div style='text-align:center;font-weight:700'>{nom_affichage(item['nom'])}</div>"
-                    f"<div style='text-align:center;color:{C_GRIS};font-size:.85em'>score {item['score']:.0f}/100</div>"
+                    f"<div style='text-align:center;font-weight:700'>{nom_affichage(nom_c)}</div>"
+                    f"<div style='text-align:center;color:{C_GRIS};font-size:.85em'>{score_c:.0f}/100</div>"
                     f"<div style='text-align:center;color:{C_GRIS};font-size:.8em'>{_tag_decision(part_eb, part_pb, corr)}</div>",
                     unsafe_allow_html=True,
                 )
+
+    # D'où vient le score : le détail par critère, pour toutes les stratégies.
+    st.markdown("**D'où vient le score ?**")
+    lignes_score = []
+    for libelle, poids in CRITERES_INSTANT:
+        ligne = {"Critère (poids)": f"{libelle} ({poids})"}
+        for nom_c in resultats:
+            ligne[nom_affichage(nom_c)] = f"{points_crit[nom_c][libelle]:.0f}"
+        lignes_score.append(ligne)
+    ligne_finale = {"Critère (poids)": "Score final (100)"}
+    for nom_c in resultats:
+        ligne_finale[nom_affichage(nom_c)] = f"{sum(points_crit[nom_c].values()):.0f}"
+    lignes_score.append(ligne_finale)
+
+    st.dataframe(pd.DataFrame(lignes_score).set_index("Critère (poids)"), use_container_width=True)
+    st.caption(
+        "Le temps de calcul n'entre pas dans l'indice : ce n'est pas une propriété de "
+        "l'instant, et aucune mesure fiable par stratégie n'est disponible ici."
+    )
 
 
 # Verdict + à retenir
 
 st.subheader("📋 Verdict")
 if classement:
-    meilleur = classement[0]
-    raisons = []
-    if meilleur["s_cout"] >= 0.99:
-        raisons.append("coût physique le plus faible des sept stratégies")
-    elif meilleur["s_cout"] >= 0.6:
-        raisons.append("coût physique parmi les plus faibles")
-    if meilleur["corr"] == 0:
-        raisons.append("décision acceptée sans correction du filtre de sécurité")
-    if meilleur["s_deseq"] >= 0.99:
-        raisons.append("meilleur équilibre entre les deux batteries")
-    elif meilleur["s_deseq"] >= 0.6:
-        raisons.append("bon équilibre des états de charge")
-    if not raisons:
-        raisons.append("meilleur compromis sur l'ensemble des critères")
+    nom_best, score_best = classement[0]
+    detail_best = points_crit[nom_best]
+    forts = [
+        libelle
+        for libelle, poids in CRITERES_INSTANT
+        if poids > 0 and detail_best[libelle] >= 0.9 * poids
+    ]
+    faibles = [
+        libelle
+        for libelle, poids in CRITERES_INSTANT
+        if poids > 0 and detail_best[libelle] <= 0.4 * poids
+    ]
+
     with st.container(border=True):
         st.markdown(
-            f"À cet instant, **{len(classement)} stratégies** ont été comparées sur "
-            "**trois critères** : coût physique, respect du filtre de sécurité et "
-            f"équilibre des états de charge. La stratégie **{nom_affichage(meilleur['nom'])}** "
-            f"obtient le meilleur score global ({meilleur['score']:.0f}/100)."
+            f"À cet instant, **{nom_affichage(nom_best)}** présente le **meilleur compromis** "
+            f"selon les {len(CRITERES_INSTANT)} critères d'évaluation retenus "
+            f"({score_best:.0f}/100)."
         )
-        st.markdown("Pourquoi :")
-        for r in raisons:
-            st.markdown(f"- {r}")
+        if forts:
+            st.markdown("Points forts à cet instant :")
+            for f in forts:
+                st.markdown(f"- {f}")
+        if faibles:
+            st.markdown("Points faibles à cet instant :")
+            for f in faibles:
+                st.markdown(f"- {f}")
+        st.caption(
+            "Ce résultat est **local à cet instant du cycle** et ne préjuge pas des "
+            "performances globales sur l'ensemble de la simulation. Pour le classement "
+            "sur tout le cycle, voir « Comparer les méthodes »."
+        )
 
     st.subheader("🎓 Ce qu'il faut retenir")
     alphas = np.array([float(resultats[nm]["alpha_final"][instant]) for nm in noms])
