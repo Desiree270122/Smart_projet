@@ -37,6 +37,7 @@ from ems_core import (
 )
 from core.resultats import assurer_donnees_session, nom_affichage
 from core.navigation import pied_navigation
+from core import ontology_explainer as ox
 
 
 @st.cache_resource(show_spinner=False)
@@ -297,38 +298,40 @@ else:
 
 # 4. Raisonnement intelligent
 
-st.header("4. Raisonnement du système")
+st.header("4. Raisonnement ontologique")
 
-st.subheader("Ce que le système détecte")
+st.caption(
+    "Les mesures deviennent des connaissances métier, qui déclenchent ensuite les "
+    "règles expertes. L'ontologie constitue donc le premier niveau d'explication."
+)
 
-phrases_etats = []
-if etats["EB_available"]:
-    phrases_etats.append("La batterie Énergie est disponible.")
-else:
-    phrases_etats.append("La batterie Énergie n'est plus disponible (SOC au minimum).")
-if etats["PB_available"]:
-    phrases_etats.append("La batterie Puissance est disponible.")
-else:
-    phrases_etats.append("La batterie Puissance n'est plus disponible (SOC au minimum).")
-if etats["EB_low_SOC"]:
-    phrases_etats.append("La batterie Énergie est presque vide.")
-if etats["PB_low_SOC"]:
-    phrases_etats.append("La batterie Puissance est presque vide.")
-if etats["high_power_demand"]:
-    phrases_etats.append("Forte demande de puissance.")
-if etats["regenerative_braking"]:
-    phrases_etats.append("Le véhicule est en freinage régénératif.")
-if etats["zero_power_demand"]:
-    phrases_etats.append("La demande de puissance est quasi nulle.")
-if etats["converter_risk"]:
-    phrases_etats.append("Le convertisseur est proche de sa limite.")
-else:
-    phrases_etats.append("Aucune limitation du convertisseur.")
+_interp = ox.interpretation_ontologique(p_dem, soc_eb, soc_pb)
 
-for phrase in phrases_etats:
-    st.markdown(f"- {phrase}")
+st.subheader("Étape 1 — Les faits observés")
+for obs in _interp["observations"]:
+    st.markdown(f"- {obs['mesure']}  ·  `{obs['individu']} · {obs['propriete']}`")
 
-st.subheader("Règle experte appliquée")
+st.subheader("Étape 2 — Interprétation par l'ontologie OntoHESS")
+st.caption("Chaque mesure est rattachée à une propriété déclarée dans l'ontologie, puis comparée à ses seuils.")
+for ded in _interp["deductions"]:
+    with st.container(border=True):
+        marque = "✔️" if ded["present"] else "—"
+        st.markdown(f"{marque} **{ded['libelle']}**  ·  `{ded['concept']}`")
+        st.caption(f"Parce que {ded['justification']}.")
+
+st.subheader("Étape 3 — Connaissances déduites")
+_libelle_etat = ox.ETATS_ONTOLOGIE[_interp["etat"]]
+st.success(
+    f"État de fonctionnement inféré : **{_libelle_etat}** "
+    f"(individu `{_interp['etat']}` de l'ontologie)."
+)
+if _interp["relations"]:
+    st.markdown(
+        "Relations mobilisées : "
+        + ", ".join(f"`{r}`" for r in _interp["relations"])
+    )
+
+st.subheader("Étape 4 — Règles expertes activées")
 
 res_fuzzy = alpha_fuzzy_calc(
     np.array([soc_eb]),
@@ -404,30 +407,44 @@ st.markdown(
 
 st.divider()
 
-with st.expander("Détails techniques : ontologie OWL OntoHESS (pour experts)"):
-    chemins = [
-        DOSSIER_PROJET / "ontologies" / "OntoHESS2.owl",
-        DOSSIER_PROJET / "ontology" / "OntoHESS2.owl",
-        DOSSIER_PROJET / "ontologie" / "OntoHESS2.owl",
-        DOSSIER_PROJET / "OntoHESS2.owl",
-    ]
-    chemin_owl = next((c for c in chemins if c.exists()), None)
+st.subheader("Connaissances utilisées")
+st.caption(
+    "Ce que cette décision a réellement mobilisé dans l'ontologie OntoHESS — "
+    "et non un simple comptage du fichier."
+)
 
-    if chemin_owl is None:
-        st.info("Fichier OWL introuvable — la logique de décision reste opérationnelle.")
-    else:
-        try:
-            from rdflib import Graph, RDF, OWL
+_relations_owl, _attributs_owl, _individus_owl = ox.vocabulaire_ontologie()
 
-            graphe = Graph()
-            graphe.parse(str(chemin_owl))
-            t1, t2, t3 = st.columns(3)
-            t1.metric("Triplets RDF", len(graphe))
-            t2.metric("Classes OWL", len(set(graphe.subjects(RDF.type, OWL.Class))))
-            t3.metric("Individus", len(set(graphe.subjects(RDF.type, OWL.NamedIndividual))))
-            st.caption(f"Ontologie chargée depuis : {chemin_owl.name}")
-        except Exception as exc:  # noqa: BLE001
-            st.info(f"Ontologie non analysée : {exc}")
+if not _individus_owl:
+    st.info("Ontologie non chargée — la logique de décision reste opérationnelle.")
+else:
+    con1, con2, con3 = st.columns(3)
+    with con1:
+        st.markdown("**Composants mobilisés**")
+        for individu in _interp["individus"]:
+            st.markdown(f"- `{individu}`")
+    with con2:
+        st.markdown("**Relations mobilisées**")
+        for relation in _interp["relations"]:
+            st.markdown(f"- `{relation}`")
+    with con3:
+        st.markdown("**Attributs mobilisés**")
+        for attribut in _interp["attributs"]:
+            st.markdown(f"- `{attribut}`")
+
+    st.markdown("**Concepts inférés à cet instant**")
+    for ded in _interp["deductions"]:
+        st.markdown(f"- `{ded['concept']}` — {ded['libelle']}")
+
+    with st.expander("Statistiques du fichier OWL"):
+        s1, s2, s3 = st.columns(3)
+        s1.metric("Classes OWL", len(ox.classes_ontologie()))
+        s2.metric("Relations", len(_relations_owl))
+        s3.metric("Attributs", len(_attributs_owl))
+        st.caption(
+            f"{len(ox.charger_regles())} règles SWRL et {len(_individus_owl)} individus "
+            "déclarés dans OntoHESS2.owl."
+        )
 
 with st.expander(f"Détails techniques : les {len(FUZZY_RULE_NAMES)} règles expertes"):
     for nom_regle in FUZZY_RULE_NAMES:

@@ -256,6 +256,126 @@ def diagnostic_configuration(soc_eb0, soc_pb0, nb_strategies, objectif):
     }
 
 
+@lru_cache(maxsize=1)
+def vocabulaire_ontologie():
+    """Relations (ObjectProperty), attributs (DatatypeProperty) et individus
+    réellement déclarés dans l'ontologie."""
+    try:
+        from rdflib import Graph, RDF, OWL
+    except ImportError:
+        return (), (), ()
+    if not CHEMIN_OWL.exists():
+        return (), (), ()
+    graphe = Graph()
+    try:
+        graphe.parse(str(CHEMIN_OWL))
+    except Exception:  # noqa: BLE001
+        return (), (), ()
+
+    def noms(type_owl):
+        return tuple(sorted({str(s).split("#")[-1] for s in graphe.subjects(RDF.type, type_owl)}))
+
+    return noms(OWL.ObjectProperty), noms(OWL.DatatypeProperty), noms(OWL.NamedIndividual)
+
+
+# États de fonctionnement réellement déclarés comme individus dans l'ontologie.
+ETATS_ONTOLOGIE = {
+    "state_Normal": "Fonctionnement normal",
+    "state_Overload_High": "Surcharge en traction",
+    "state_Overload_Low": "Surcharge en récupération",
+}
+
+
+def interpretation_ontologique(p_dem, soc_eb, soc_pb):
+    """Chaîne « mesures → concepts de l'ontologie → état inféré ».
+
+    Les mesures sont rattachées aux propriétés réellement déclarées dans
+    OntoHESS2.owl, et l'état inféré est l'un des individus `state_*` de
+    l'ontologie, déterminé par les seuils que les règles SWRL comparent.
+    """
+    relations, attributs, individus = vocabulaire_ontologie()
+
+    observations = [
+        {
+            "mesure": f"SOC de la batterie Énergie = {soc_eb * 100:.0f} %",
+            "propriete": "hasSocBattery",
+            "individu": "batteryE1",
+        },
+        {
+            "mesure": f"SOC de la batterie Puissance = {soc_pb * 100:.0f} %",
+            "propriete": "hasSocBattery",
+            "individu": "batteryP1",
+        },
+        {
+            "mesure": f"Puissance demandée = {p_dem / 1000:.1f} kW",
+            "propriete": "hasPower",
+            "individu": "load1",
+        },
+    ]
+
+    # L'état est déterminé par les mêmes seuils que ceux comparés dans les règles.
+    if p_dem > core.P_EB_MAX_W:
+        etat = "state_Overload_High"
+        justification = (
+            f"la puissance demandée ({p_dem / 1000:.1f} kW) dépasse `pEB_max_value` "
+            f"({core.P_EB_MAX_W / 1000:.1f} kW)"
+        )
+    elif p_dem < core.P_EB_MIN_W:
+        etat = "state_Overload_Low"
+        justification = (
+            f"la puissance récupérée ({p_dem / 1000:.1f} kW) dépasse la capacité de "
+            f"recharge `pEB_min_value` ({core.P_EB_MIN_W / 1000:.1f} kW)"
+        )
+    else:
+        etat = "state_Normal"
+        justification = (
+            f"la puissance demandée ({p_dem / 1000:.1f} kW) reste dans les limites "
+            f"`pEB_min_value` … `pEB_max_value`"
+        )
+
+    eb_sous_seuil = soc_eb <= core.SOC_EB_MIN
+    deductions = [
+        {
+            "concept": etat,
+            "libelle": ETATS_ONTOLOGIE[etat],
+            "justification": justification,
+            "present": etat in individus,
+        },
+        {
+            "concept": "SOCCondition",
+            "libelle": (
+                "SOC de la batterie Énergie sous son seuil"
+                if eb_sous_seuil
+                else "SOC de la batterie Énergie au-dessus de son seuil"
+            ),
+            "justification": (
+                f"`hasSocBattery` = {soc_eb * 100:.0f} % comparé à `socEB_minThreshold` "
+                f"= {core.SOC_EB_MIN * 100:.0f} %"
+            ),
+            "present": "SOCCondition" in classes_ontologie(),
+        },
+    ]
+
+    # Relations effectivement mobilisées PAR CE raisonnement : elles dépendent de
+    # l'état inféré (leadsToOverload n'a de sens qu'en situation de surcharge).
+    candidates = ["hasThreshold", "hasSOCState", "dependsOnSOC"]
+    if etat != "state_Normal":
+        candidates += ["leadsToOverload", "triggersState"]
+    mobilisees = [r for r in candidates if r in relations]
+
+    return {
+        "observations": observations,
+        "deductions": deductions,
+        "etat": etat,
+        "relations": mobilisees,
+        "attributs": [
+            a for a in ("hasSocBattery", "hasPower", "socEB_minThreshold", "pEB_max_value", "pEB_min_value", "hasAlpha")
+            if a in attributs
+        ],
+        "individus": [i for i in ("hess1", "batteryE1", "batteryP1", "converter1", "load1") if i in individus],
+    }
+
+
 HYPOTHESES = [
     "Tensions de pack considérées constantes (valeurs nominales).",
     "Convertisseur représenté par un modèle de puissance simplifié avec ses limites.",
