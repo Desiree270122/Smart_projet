@@ -32,6 +32,7 @@ menu = {
         st.Page("vues/7_Explicabilite.py", title="Pourquoi cette décision ?"),
     ],
     "Intelligence": [
+        st.Page("vues/9_Architecture_des_modeles.py", title="Architecture des modèles"),
         st.Page("vues/3_Ontologie_OntoHESS.py", title="Base de connaissances HESS"),
         st.Page("vues/4_Moteur_Neurosymbolique.py", title="Raisonnement neuro-symbolique"),
     ],

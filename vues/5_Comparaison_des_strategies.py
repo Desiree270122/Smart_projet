@@ -1,6 +1,8 @@
 
 
+import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 from core.resultats import (
@@ -19,13 +21,13 @@ from core.resultats import (
 def _charger():
     donnees = charger_reference()
     metriques = calculer_metriques(donnees)
-    return donnees["meta"], metriques
+    return donnees["meta"], metriques, donnees["resultats"]
 
 
 st.title("Comparaison des stratégies EMS")
 
 try:
-    meta, metriques = _charger()
+    meta, metriques, resultats = _charger()
 except FileNotFoundError as exc:
     st.error(str(exc))
     st.info(
@@ -77,6 +79,45 @@ with col_hi:
         f"- Meilleur équilibre SOC : **{nom_affichage(meilleure_strategie(metriques, 'Équilibre EB/PB')[0])}**\n"
         f"- Meilleure explicabilité : **{nom_affichage(meilleure_strategie(metriques, 'Explicabilité')[0])}**"
     )
+
+st.divider()
+
+
+# Évolution des SOC de toutes les stratégies (comparaison visuelle)
+
+st.subheader("Évolution des états de charge (comparaison)")
+
+_noms = list(resultats.keys())
+
+
+def _courbe_soc(cle_soc, titre):
+    fig = go.Figure()
+    for nom_s in _noms:
+        y = np.asarray(resultats[nom_s][cle_soc], dtype=float) * 100.0
+        x = np.arange(len(y))
+        pas = max(1, len(y) // 2000)
+        fig.add_trace(go.Scatter(x=x[::pas], y=y[::pas], mode="lines", name=nom_affichage(nom_s)))
+    fig.update_layout(
+        title=titre,
+        xaxis_title="Temps (s)",
+        yaxis_title="SOC (%)",
+        height=380,
+        legend_title="Stratégie",
+        margin=dict(t=50, b=40),
+    )
+    return fig
+
+
+col_soc_eb, col_soc_pb = st.columns(2)
+with col_soc_eb:
+    st.plotly_chart(_courbe_soc("SOC_EB", "SOC batterie Énergie"), use_container_width=True)
+with col_soc_pb:
+    st.plotly_chart(_courbe_soc("SOC_PB", "SOC batterie Puissance"), use_container_width=True)
+
+st.caption(
+    f"Les {len(_noms)} stratégies (logique floue et GNN inclus) sont comparées sur le même cycle. "
+    "Clique dans la légende pour isoler une stratégie."
+)
 
 st.divider()
 

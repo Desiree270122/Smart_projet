@@ -18,6 +18,7 @@ ORDRE_PAGES = [
     ("Comparaison des stratégies", "vues/5_Comparaison_des_strategies.py"),
     ("Analyse détaillée", "vues/6_Resultats_et_Analyse.py"),
     ("Pourquoi cette décision ?", "vues/7_Explicabilite.py"),
+    ("Architecture des modèles", "vues/9_Architecture_des_modeles.py"),
     ("Base de connaissances HESS", "vues/3_Ontologie_OntoHESS.py"),
     ("Raisonnement neuro-symbolique", "vues/4_Moteur_Neurosymbolique.py"),
 ]
