@@ -177,10 +177,13 @@ st.info(
     "avec les contraintes physiques du système HESS."
 )
 
-acces1, acces2 = st.columns(2)
+acces1, acces2, acces3 = st.columns(3)
 with acces1:
     if st.button("Explorer les résultats", type="primary", use_container_width=True):
         st.switch_page("vues/5_Comparaison_des_strategies.py")
 with acces2:
+    if st.button("Architecture des modèles", use_container_width=True):
+        st.switch_page("vues/9_Architecture_des_modeles.py")
+with acces3:
     if st.button("Préparation des données", use_container_width=True):
         st.switch_page("vues/2_Preparation_donnees.py")
