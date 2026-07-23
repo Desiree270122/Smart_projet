@@ -135,26 +135,33 @@ if not finis:
     st.warning("Métrique indisponible pour ce critère.")
 else:
     ref = gagnants[0]
-    raisons = [f"{COLONNES[met_c][0]} = {fmt(met_c, finis[ref])}, la meilleure des {len(noms)}"]
+    raisons = [
+        f"{COLONNES[met_c][0]} = {fmt(met_c, finis[ref])} "
+        f"(meilleur résultat parmi les {len(noms)} stratégies évaluées)"
+    ]
     if met_c != "nb_violations" and metriques[ref].get("nb_violations", 1) == 0:
-        raisons.append("aucune violation SOC sur l'ensemble du cycle")
+        raisons.append("aucune violation des contraintes de SOC sur l'ensemble du cycle")
     autres = [
         c for c in CRIT
         if c != critere and meilleure_strategie(metriques, c)[0] in gagnants
     ]
     if autres:
-        raisons.append("également en tête sur : " + ", ".join(autres))
+        raisons.append("également classées premières pour : " + ", ".join(autres))
+
+    _noms_g = [f"**{nom_affichage(g)}**" for g in gagnants]
+    _liste_g = " et ".join([", ".join(_noms_g[:-1]), _noms_g[-1]]) if len(_noms_g) > 1 else _noms_g[0]
 
     with st.container(border=True):
         if len(gagnants) == 1:
-            st.markdown(f"### {nom_affichage(ref)}")
-            st.caption(f"Stratégie recommandée si vous privilégiez « {critere} »")
+            st.markdown(f"### 🏆 {nom_affichage(ref)}")
+            st.caption(f"Stratégie recommandée lorsque le critère « {critere} » est prioritaire.")
         else:
-            st.markdown("### " + "  ·  ".join(nom_affichage(g) for g in gagnants))
-            st.caption(
-                f"{len(gagnants)} stratégies **ex æquo** en tête (résultat identique) "
-                f"si vous privilégiez « {critere} »"
+            st.markdown("### 🏆 Première place (égalité)")
+            st.markdown(
+                f"Les stratégies {_liste_g} obtiennent un **résultat identique** et occupent "
+                f"la première place lorsque le critère « {critere} » est prioritaire."
             )
+        st.markdown("**Résultats clés**")
         for r in raisons:
             st.markdown(f"- {r}")
 
