@@ -282,4 +282,3 @@ with st.expander("Indicateurs bruts, toutes stratégies"):
  
 pied_navigation("vues/6_Resultats_et_Analyse.py")
  
-Conversation introuvable.
