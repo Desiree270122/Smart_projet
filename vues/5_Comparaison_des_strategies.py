@@ -11,8 +11,6 @@ from core.resultats import (
     meilleure_strategie,
     nom_affichage,
     CRITERES,
-    EXPLICABILITE,
-    NIVEAUX_EXPLICABILITE,
 )
 
 
@@ -66,13 +64,31 @@ def fmt(met, val):
     return COLONNES.get(met, ("", "{:.4f}"))[1].format(val)
 
 
+def _rangs_competition(finis, sens):
+    """Rang 1..N avec ex æquo : deux valeurs égales reçoivent le même rang
+    (style sportif : 1, 1, puis 3). Retourne (ordre trié, {stratégie: rang})."""
+    ordre = sorted(finis, key=lambda n: finis[n], reverse=(sens == "max"))
+    rangs, rang, precedent = {}, 0, None
+    for i, n in enumerate(ordre):
+        v = finis[n]
+        if precedent is None or abs(v - precedent) > 1e-9:
+            rang = i + 1
+        rangs[n] = rang
+        precedent = v
+    return ordre, rangs
+
+
+def _rang_txt(rang):
+    return f"{rang}{'er' if rang == 1 else 'e'}"
+
+
 @st.cache_data(show_spinner="Chargement des résultats précalculés…")
 def _charger():
     donnees = charger_reference()
     return donnees["meta"], calculer_metriques(donnees), donnees["resultats"]
 
 
-st.title("Comparer les méthodes")
+st.title("⚖️ Comparer les méthodes")
 st.caption(
     "Quelle stratégie de gestion d'énergie choisir, et pourquoi ? Choisissez "
     "d'abord le critère qui compte pour vous : tout le reste de la page s'y adapte."
@@ -106,40 +122,52 @@ critere = st.selectbox(
     index=list(CRIT.keys()).index("Sécurité physique") if "Sécurité physique" in CRIT else 0,
 )
 met_c, sens = CRIT[critere]
-best_cle, best_val = meilleure_strategie(metriques, critere)
+
+vals = {n: metriques[n].get(met_c, float("nan")) for n in noms}
+finis = {n: v for n, v in vals.items() if v == v}
+ordre, rangs = _rangs_competition(finis, sens)
+gagnants = [n for n in ordre if rangs.get(n) == 1]  # ex æquo au rang 1
 
 
 # 2 — La réponse
 
-if best_cle is None:
+if not finis:
     st.warning("Métrique indisponible pour ce critère.")
 else:
-    raisons = [f"{COLONNES[met_c][0]} = {fmt(met_c, best_val)}, la meilleure des sept"]
-    if met_c != "nb_violations" and metriques[best_cle].get("nb_violations", 1) == 0:
+    ref = gagnants[0]
+    raisons = [f"{COLONNES[met_c][0]} = {fmt(met_c, finis[ref])}, la meilleure des {len(noms)}"]
+    if met_c != "nb_violations" and metriques[ref].get("nb_violations", 1) == 0:
         raisons.append("aucune violation SOC sur l'ensemble du cycle")
-    autres = [c for c in CRIT if c != critere and meilleure_strategie(metriques, c)[0] == best_cle]
+    autres = [
+        c for c in CRIT
+        if c != critere and meilleure_strategie(metriques, c)[0] in gagnants
+    ]
     if autres:
         raisons.append("également en tête sur : " + ", ".join(autres))
 
     with st.container(border=True):
-        st.markdown(f"### {nom_affichage(best_cle)}")
-        st.caption(f"Stratégie recommandée si vous privilégiez « {critere} »")
+        if len(gagnants) == 1:
+            st.markdown(f"### {nom_affichage(ref)}")
+            st.caption(f"Stratégie recommandée si vous privilégiez « {critere} »")
+        else:
+            st.markdown("### " + "  ·  ".join(nom_affichage(g) for g in gagnants))
+            st.caption(
+                f"{len(gagnants)} stratégies **ex æquo** en tête (résultat identique) "
+                f"si vous privilégiez « {critere} »"
+            )
         for r in raisons:
             st.markdown(f"- {r}")
 
 
 # 3 — Classement sur ce critère
 
-st.subheader("Classement sur ce critère")
-
-vals = {n: metriques[n].get(met_c, float("nan")) for n in noms}
-finis = {n: v for n, v in vals.items() if v == v}
-ordre = sorted(finis, key=lambda n: finis[n], reverse=(sens == "max"))
+st.subheader("🏅 Classement sur ce critère")
+st.caption("Les stratégies au résultat identique partagent le même rang (ex æquo).")
 
 fig_rang = go.Figure(
     go.Bar(
         x=[finis[n] for n in ordre][::-1],
-        y=[nom_affichage(n) for n in ordre][::-1],
+        y=[f"{_rang_txt(rangs[n])}  {nom_affichage(n)}" for n in ordre][::-1],
         orientation="h",
         marker_color=[couleur(n) for n in ordre][::-1],
         text=[fmt(met_c, finis[n]) for n in ordre][::-1],
@@ -159,14 +187,18 @@ st.plotly_chart(fig_rang, use_container_width=True)
 
 # 4 — Tableau unique, stratégies en lignes
 
-st.subheader("Toutes les stratégies, critère par critère")
-st.caption("★ = meilleure valeur. La flèche indique le sens favorable.")
+st.subheader("📊 Toutes les stratégies, critère par critère")
+st.caption("★ = meilleure valeur (plusieurs ★ si ex æquo). La flèche indique le sens favorable.")
 
 meilleurs = {}
 for nom_c, (met, sens_c) in CRIT.items():
     v = {n: metriques[n].get(met, float("nan")) for n in noms}
     f = {n: x for n, x in v.items() if x == x}
-    meilleurs[nom_c] = (min if sens_c == "min" else max)(f, key=lambda n: f[n]) if f else None
+    if not f:
+        meilleurs[nom_c] = set()
+        continue
+    cible = (min if sens_c == "min" else max)(f.values())
+    meilleurs[nom_c] = {n for n, x in f.items() if abs(x - cible) <= 1e-9}
 
 lignes = []
 for n in ordre + [x for x in noms if x not in ordre]:
@@ -174,7 +206,7 @@ for n in ordre + [x for x in noms if x not in ordre]:
     for nom_c, (met, sens_c) in CRIT.items():
         entete = f"{nom_c} {'↑' if sens_c == 'max' else '↓'}"
         texte = fmt(met, metriques[n].get(met, float("nan")))
-        ligne[entete] = texte + (" ★" if meilleurs[nom_c] == n else "")
+        ligne[entete] = texte + (" ★" if n in meilleurs[nom_c] else "")
     lignes.append(ligne)
 
 st.dataframe(pd.DataFrame(lignes).set_index("Stratégie"), use_container_width=True)
@@ -182,7 +214,7 @@ st.dataframe(pd.DataFrame(lignes).set_index("Stratégie"), use_container_width=T
 
 # 5 — Courbes SOC, légende unique
 
-st.subheader("Évolution des états de charge")
+st.subheader("📉 Évolution des états de charge")
 st.caption(
     "Plus une courbe descend, plus la batterie a été sollicitée. "
     "Les deux graphes partagent la même légende."
@@ -225,7 +257,7 @@ g2.plotly_chart(courbe("SOC_PB", "Batterie Puissance"), use_container_width=True
 
 # 6 — Détails
 
-st.subheader("Détails")
+st.subheader("📋 Détails")
 
 with st.expander("Score composite toutes stratégies confondues"):
     def _scores(metriques):
@@ -244,6 +276,7 @@ with st.expander("Score composite toutes stratégies confondues"):
         return {n: (sum(v) / len(v) if v else 0.0) for n, v in s.items()}
 
     sc = _scores(metriques)
+    _, rangs_sc = _rangs_competition(sc, "max")
     clst = sorted(sc.items(), key=lambda kv: kv[1], reverse=True)
     ecart = (max(sc.values()) - min(sc.values())) * 100 if sc else 0.0
 
@@ -253,8 +286,8 @@ with st.expander("Score composite toutes stratégies confondues"):
         "les critères également, ce qui n'est pas un choix neutre : il sert de "
         "repère, pas de verdict."
     )
-    for rang, (n, v) in enumerate(clst, start=1):
-        st.markdown(f"{rang}. {nom_affichage(n)} — {v * 100:.0f} %")
+    for n, v in clst:
+        st.markdown(f"{_rang_txt(rangs_sc[n])}. {nom_affichage(n)} — {v * 100:.0f} %")
     if ecart < 15:
         st.caption(
             f"Écart de {ecart:.0f} points entre la première et la dernière : "
@@ -275,20 +308,6 @@ with st.expander("Tableau complet des métriques brutes"):
             ligne[lib] = f.format(v) if v == v else "—"
         brut.append(ligne)
     st.dataframe(pd.DataFrame(brut).set_index("Stratégie"), use_container_width=True)
-
-with st.expander("Explicabilité des modèles"):
-    st.caption(
-        "L'explicabilité n'est pas mesurable sur une trajectoire : c'est une "
-        "propriété de la structure du modèle. Elle est déclarée ci-dessous et "
-        "n'entre pas dans le classement chiffré."
-    )
-    for n in noms:
-        niveau, justif = EXPLICABILITE.get(n, (0, "—"))
-        st.markdown(
-            f"**{nom_affichage(n)}** — {NIVEAUX_EXPLICABILITE.get(niveau, '—')}  \n{justif}"
-
-        )
-
 
 from core.navigation import pied_navigation
 
