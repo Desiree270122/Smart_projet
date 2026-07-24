@@ -1,3 +1,5 @@
+
+
 import sys
 from pathlib import Path
 
@@ -10,175 +12,51 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 
-import ems_core as core
-from ems_core import alpha_fuzzy_calc, EPS_POWER_W
+from ems_core import (
+    alpha_fuzzy_calc,
+    compute_symbolic_states,
+    V_EB_PACK_NOM,
+)
 from core.resultats import assurer_donnees_session, nom_affichage
 from core import ontology_explainer as ox
+from core.navigation import pied_navigation
 
 
-# Configuration de page gérée par le routeur Accueil.py.
 
 C_EB = "#3B82F6"
 C_PB = "#22C55E"
-C_OK = "#22C55E"
-C_ATTENTION = "#F59E0B"
 C_GRIS = "#94A3B8"
-MEDAILLES = ["🥇", "🥈", "🥉", "4e", "5e", "6e", "7e"]
 
 
-def _scenario(p_dem, speed_kmh, accel):
-    if abs(p_dem) <= EPS_POWER_W:
-        return "Arrêt / roue libre"
-    if p_dem < 0:
-        return "Freinage / récupération"
-    if accel > 0.8:
-        return "Forte accélération"
-    if speed_kmh > 90:
-        return "Vitesse élevée"
-    return "Traction régulière"
+
+LIB_ETATS = {
+    "high_power_demand": "Forte demande de puissance",
+    "regenerative_braking": "Freinage régénératif",
+    "zero_power_demand": "Demande quasi nulle",
+    "converter_risk": "Convertisseur proche de sa limite",
+    "EB_available": "Batterie Énergie disponible",
+    "PB_available": "Batterie Puissance disponible",
+    "EB_low_SOC": "SOC batterie Énergie faible",
+    "PB_low_SOC": "SOC batterie Puissance faible",
+}
 
 
-def _pensee(part_eb, part_pb, correction, p_dem):
-    if abs(p_dem) <= EPS_POWER_W:
-        texte = "Demande quasi nulle : je sollicite peu les batteries."
-    elif p_dem < 0:
-        cible = "Puissance" if part_pb >= part_eb else "Énergie"
-        texte = f"Freinage : je dirige la récupération surtout vers la batterie {cible}."
-    elif part_eb >= part_pb:
-        texte = f"Je privilégie la batterie Énergie ({part_eb:.0f} %) car la demande reste gérable."
-    else:
-        texte = f"Je sollicite davantage la batterie Puissance ({part_pb:.0f} %) pour absorber le pic."
-    if correction:
-        texte += " Ma proposition a été ajustée par le filtre de sécurité."
-    return texte
+def _alpha_fuzzy(soc_eb, soc_pb, p_dem, accel):
+    return float(
+        alpha_fuzzy_calc(np.array([soc_eb]), np.array([soc_pb]), np.array([p_dem]), np.array([accel]))["alpha"][0]
+    )
 
 
-def _tag_decision(part_eb, part_pb, correction):
-    if correction:
-        return "décision corrigée par le filtre"
-    if abs(part_eb - part_pb) <= 10:
-        return "bon équilibre EB/PB"
-    if part_eb > part_pb:
-        return "préserve la batterie Puissance"
-    return "soulage la batterie Énergie"
-
-
-# Indice multicritère évalué à un instant donné. Chaque composante est calculée
-# depuis la trajectoire ; les poids sont explicites et affichés à l'utilisateur.
-# Le « temps de calcul » est volontairement absent : ce n'est pas une propriété
-# de l'instant, et aucune mesure fiable par stratégie n'existe dans le fichier
-# précalculé — l'inventer fausserait le classement.
-CRITERES_INSTANT = [
-    ("Respect des contraintes physiques", 25),
-    ("Qualité de service (demande satisfaite)", 20),
-    ("Coût énergétique", 20),
-    ("Intervention du filtre de sécurité", 15),
-    ("Préservation et équilibre des batteries", 10),
-    ("Stabilité de la décision", 5),
-    ("Cohérence avec OntoHESS", 5),
-]
-
-
-def _norm_min(valeurs):
-    """Normalise un critère « plus bas = mieux » en sous-score 0..1 (1 = meilleur),
-    relativement aux stratégies comparées à cet instant."""
-    finis = [v for v in valeurs.values() if v == v]
-    lo, hi = (min(finis), max(finis)) if finis else (0.0, 1.0)
-    out = {}
-    for nom, v in valeurs.items():
-        if v != v:
-            out[nom] = 0.0
-        elif hi - lo < 1e-12:
-            out[nom] = 1.0
-        else:
-            out[nom] = 1.0 - (v - lo) / (hi - lo)
-    return out
-
-
-def _evaluer(resultats, instant, p_dem, accel):
-    """Évalue chaque stratégie à cet instant sur les sept critères pondérés.
-
-    Retourne (points, total) où points[stratégie][critère] est le nombre de
-    points obtenus sur le poids du critère.
-    """
-    brut = {}
-    for nom, tr in resultats.items():
-        se = float(tr["SOC_EB"][instant])
-        sp = float(tr["SOC_PB"][instant])
-        a = float(tr["alpha_final"][instant])
-        a_req = float(tr["alpha_requested"][instant]) if "alpha_requested" in tr else a
-        a_prev = float(tr["alpha_final"][instant - 1]) if instant > 0 else a
-
-        try:
-            m = core.candidate_metrics(np.array([a]), p_dem, se, sp, None)
-            cout = float(m["total_cost"][0])
-        except Exception:  # noqa: BLE001
-            cout = float("nan")
-
-        try:
-            a_fuzzy = float(
-                alpha_fuzzy_calc(
-                    np.array([se]), np.array([sp]), np.array([p_dem]), np.array([accel])
-                )["alpha"][0]
-            )
-        except Exception:  # noqa: BLE001
-            a_fuzzy = a
-
-        corrige = "correction_applied" in tr and bool(tr["correction_applied"][instant])
-        brut[nom] = {
-            "faisable": bool(tr["feasible"][instant]) if "feasible" in tr else True,
-            "violation": bool(tr["soc_violation"][instant]) if "soc_violation" in tr else False,
-            "service": abs(float(tr["P_unserved"][instant])) + abs(float(tr["P_regen_curtailed"][instant]))
-            if ("P_unserved" in tr and "P_regen_curtailed" in tr)
-            else 0.0,
-            "cout": cout,
-            "filtre": abs(a - a_req) + (1.0 if corrige else 0.0),
-            "equilibre": abs(se - sp),
-            "stabilite": abs(a - a_prev),
-            "expert": abs(a - a_fuzzy),
-        }
-
-    s_service = _norm_min({n: b["service"] for n, b in brut.items()})
-    s_cout = _norm_min({n: b["cout"] for n, b in brut.items()})
-    s_filtre = _norm_min({n: b["filtre"] for n, b in brut.items()})
-    s_equil = _norm_min({n: b["equilibre"] for n, b in brut.items()})
-    s_stab = _norm_min({n: b["stabilite"] for n, b in brut.items()})
-    s_exp = _norm_min({n: b["expert"] for n, b in brut.items()})
-
-    points, total = {}, {}
-    for nom, b in brut.items():
-        # Critère de sécurité noté en ABSOLU : une stratégie ne mérite pas la
-        # note maximale simplement parce que les autres font pire.
-        if not b["faisable"]:
-            p_phys = 0.0
-        elif b["violation"]:
-            p_phys = 25 * 0.5
-        else:
-            p_phys = 25.0
-
-        points[nom] = {
-            "Respect des contraintes physiques": p_phys,
-            "Qualité de service (demande satisfaite)": 20 * s_service[nom],
-            "Coût énergétique": 20 * s_cout[nom],
-            "Intervention du filtre de sécurité": 15 * s_filtre[nom],
-            "Préservation et équilibre des batteries": 10 * s_equil[nom],
-            "Stabilité de la décision": 5 * s_stab[nom],
-            # Écart à la proposition des règles floues, elles-mêmes fondées sur
-            # les concepts et seuils déclarés dans l'ontologie OntoHESS.
-            "Cohérence avec OntoHESS": 5 * s_exp[nom],
-        }
-        total[nom] = sum(points[nom].values())
-
-    return points, total
+def _fleche():
+    st.markdown(f"<div style='color:{C_GRIS};font-size:1.1em'>&#8595;</div>", unsafe_allow_html=True)
 
 
 st.title("📊 Analyse instantanée")
 st.caption(
-    "Comprenez comment chaque stratégie réagit à un instant précis du cycle de "
-    "conduite. Ici on compare les approches ; pour explorer en profondeur une "
-    "seule stratégie, voir « Pourquoi cette décision ? »."
+    "Que décide chaque stratégie à un instant précis, et comment cette décision "
+    "se construit-elle ? Pour comparer les stratégies sur l'ensemble du cycle, "
+    "voir « Comparer les méthodes »."
 )
-
 
 try:
     _source = assurer_donnees_session(st)
@@ -195,327 +73,211 @@ if not resultats or df is None:
 
 st.caption(f"Source des données : {_source}")
 
+noms = list(resultats.keys())
 n = min([len(df)] + [len(tr["P_EB"]) for tr in resultats.values()])
-instant = st.slider("Instant du cycle à analyser", 0, n - 1, n // 2)
+
+
+# Un seul sélecteur de stratégie + le curseur d'instant, en tête : ils pilotent
+# tout le reste de la page.
+
+col_i, col_s = st.columns([2, 1])
+with col_i:
+    if "time" in df.columns and n > 1:
+        _t = df["time"].to_numpy()[:n]
+        t_min, t_max = int(_t[0]), int(_t[-1])
+        t_choisi = st.slider("Instant du cycle (s)", t_min, t_max, int((t_min + t_max) // 2))
+        instant = int(np.abs(_t - t_choisi).argmin())
+    else:
+        instant = st.slider("Échantillon", 0, n - 1, n // 2)
+with col_s:
+    strategie = st.selectbox("Stratégie analysée", noms, format_func=nom_affichage)
 
 ligne = df.iloc[instant]
 t_sel = float(ligne["time"]) if "time" in df.columns else float(instant)
-speed = float(ligne["speed"]) if "speed" in df.columns else 0.0
-speed_kmh = speed * 3.6
+speed_kmh = (float(ligne["speed"]) * 3.6) if "speed" in df.columns else 0.0
 accel = float(ligne["hasAcceleration"]) if "hasAcceleration" in df.columns else 0.0
 p_dem = float(ligne["hasPower"])
-scenario = _scenario(p_dem, speed_kmh, accel)
+
+tr_sel = resultats[strategie]
+soc_eb_sel = float(tr_sel["SOC_EB"][instant])
+soc_pb_sel = float(tr_sel["SOC_PB"][instant])
+i_eb_sel = float(tr_sel["I_EB"][instant])
+alpha_final = float(tr_sel["alpha_final"][instant])
+alpha_req = float(tr_sel["alpha_requested"][instant]) if "alpha_requested" in tr_sel else alpha_final
+corr_sel = bool(tr_sel["correction_applied"][instant]) if "correction_applied" in tr_sel else False
+
+# Source UNIQUE des états symboliques : celle que les modèles consomment.
+etats = compute_symbolic_states(p_dem, soc_eb_sel, soc_pb_sel, p_eb=i_eb_sel * V_EB_PACK_NOM)
+etats_actifs = [LIB_ETATS[k] for k in LIB_ETATS if etats.get(k)]
+
+# État de fonctionnement inféré par l'ontologie (remplace l'ancien _scenario).
+interp = ox.interpretation_ontologique(p_dem, soc_eb_sel, soc_pb_sel)
+etat_op = ox.ETATS_ONTOLOGIE[interp["etat"]]
 
 
-# Situation actuelle
+# Situation du véhicule (texte en caption, pas en st.metric qui tronque)
 
-st.subheader("Situation actuelle")
-c1, c2, c3, c4 = st.columns(4)
+st.subheader("Situation du véhicule")
+c1, c2, c3 = st.columns(3)
 c1.metric("Vitesse", f"{speed_kmh:.0f} km/h")
 c2.metric("Puissance demandée", f"{p_dem / 1000:.1f} kW")
 c3.metric("Accélération", f"{accel:+.1f} m/s²")
-c4.metric("Situation", scenario)
-st.caption(f"Instant analysé : t = {t_sel:.0f} s.")
+st.caption(
+    f"Instant : t = {t_sel:.0f} s.  ·  État de fonctionnement inféré par l'ontologie : "
+    f"**{etat_op}** (`{interp['etat']}`), sur les états de charge de {nom_affichage(strategie)}."
+)
 
 
-# Décisions des modèles (cartes, plus de dataframe brut)
+# Décision de chaque stratégie : table compacte (dense et rigoureuse) + barre alpha
 
-st.subheader("📊 Décisions des modèles")
+st.subheader("Décision de chaque stratégie")
 
-noms = list(resultats.keys())
-par_ligne = 4
-for i0 in range(0, len(noms), par_ligne):
-    bloc = noms[i0 : i0 + par_ligne]
-    cols = st.columns(par_ligne)
-    for col, nom in zip(cols, bloc):
-        tr = resultats[nom]
-        p_eb = float(tr["P_EB"][instant])
-        p_pb = float(tr["P_PB"][instant])
-        alpha = float(tr["alpha_final"][instant])
-        corr = bool(tr["correction_applied"][instant]) if "correction_applied" in tr else False
-        tot = abs(p_eb) + abs(p_pb)
-        part_eb = 100.0 * abs(p_eb) / tot if tot > 1.0 else 0.0
-        part_pb = 100.0 * abs(p_pb) / tot if tot > 1.0 else 0.0
-        with col:
-            with st.container(border=True):
-                st.markdown(f"**{nom_affichage(nom)}**")
-                st.markdown(
-                    f"<span style='color:{C_EB};font-weight:700'>EB {part_eb:.0f} %</span> · "
-                    f"<span style='color:{C_PB};font-weight:700'>PB {part_pb:.0f} %</span>",
-                    unsafe_allow_html=True,
-                )
-                st.caption(f"alpha = {alpha:.2f}")
-                coul = C_ATTENTION if corr else C_OK
-                mot = "corrigée" if corr else "acceptée"
-                st.markdown(
-                    f"<span style='color:{coul}'>&#9679; {mot}</span>",
-                    unsafe_allow_html=True,
-                )
+lignes = []
+for nom in noms:
+    tr = resultats[nom]
+    a = float(tr["alpha_final"][instant])
+    a_req = float(tr["alpha_requested"][instant]) if "alpha_requested" in tr else a
+    se = float(tr["SOC_EB"][instant])
+    sp = float(tr["SOC_PB"][instant])
+    a_fz = _alpha_fuzzy(se, sp, p_dem, accel)
+    corr = bool(tr["correction_applied"][instant]) if "correction_applied" in tr else False
+    lignes.append(
+        {
+            "Stratégie": nom_affichage(nom),
+            "alpha (part PB)": round(a, 2),
+            "P_EB (kW)": round(float(tr["P_EB"][instant]) / 1000, 1),
+            "P_PB (kW)": round(float(tr["P_PB"][instant]) / 1000, 1),
+            "Écart / base floue": round(a - a_fz, 2),
+            "Écart / demandé": round(a - a_req, 2),
+            "Filtre": "corrigée" if corr else "—",
+        }
+    )
+st.dataframe(pd.DataFrame(lignes).set_index("Stratégie"), use_container_width=True)
+st.caption(
+    "alpha est la fraction de puissance confiée à la PB. « Écart / base floue » = "
+    "distance à ce que proposerait la logique floue ; « Écart / demandé » = correction "
+    "apportée par le filtre de sécurité."
+)
+
+ordre = sorted(noms, key=lambda x: float(resultats[x]["alpha_final"][instant]), reverse=True)
+fig_alpha = go.Figure(
+    go.Bar(
+        x=[float(resultats[x]["alpha_final"][instant]) for x in ordre][::-1],
+        y=[nom_affichage(x) for x in ordre][::-1],
+        orientation="h",
+        marker_color=[(C_PB if x == strategie else C_GRIS) for x in ordre][::-1],
+        text=[f"{float(resultats[x]['alpha_final'][instant]):.2f}" for x in ordre][::-1],
+        textposition="outside",
+        hoverinfo="skip",
+    )
+)
+fig_alpha.update_layout(
+    height=40 * len(noms) + 70,
+    margin=dict(t=10, b=30, l=10, r=50),
+    xaxis=dict(title="alpha — part confiée à la PB", range=[0, 1]),
+    showlegend=False,
+)
+st.plotly_chart(fig_alpha, use_container_width=True)
+st.caption(f"En vert : la stratégie sélectionnée ({nom_affichage(strategie)}).")
 
 
-# Évolution autour de cet instant (une seule figure, stratégie au choix)
+# Évolution locale, pour la stratégie sélectionnée uniquement
 
 st.subheader("📈 Évolution autour de cet instant")
 
-strategie_focus = st.selectbox(
-    "Stratégie détaillée sur les courbes",
-    noms,
-    format_func=nom_affichage,
-)
-tr_f = resultats[strategie_focus]
-
 demi = 150
 i0, i1 = max(0, instant - demi), min(n, instant + demi + 1)
-xx = df["time"].to_numpy()[i0:i1]
+xx = df["time"].to_numpy()[i0:i1] if "time" in df.columns else np.arange(i0, i1)
 
 fig = make_subplots(
     rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
     subplot_titles=("Puissances (kW)", "États de charge (%)"),
 )
 fig.add_trace(go.Scatter(x=xx, y=df["hasPower"].to_numpy()[i0:i1] / 1000.0, name="P_dem", line=dict(color=C_GRIS)), row=1, col=1)
-fig.add_trace(go.Scatter(x=xx, y=np.asarray(tr_f["P_EB"], float)[i0:i1] / 1000.0, name="P_EB", line=dict(color=C_EB)), row=1, col=1)
-fig.add_trace(go.Scatter(x=xx, y=np.asarray(tr_f["P_PB"], float)[i0:i1] / 1000.0, name="P_PB", line=dict(color=C_PB)), row=1, col=1)
-fig.add_trace(go.Scatter(x=xx, y=np.asarray(tr_f["SOC_EB"], float)[i0:i1] * 100.0, name="SOC_EB", line=dict(color=C_EB, dash="dot")), row=2, col=1)
-fig.add_trace(go.Scatter(x=xx, y=np.asarray(tr_f["SOC_PB"], float)[i0:i1] * 100.0, name="SOC_PB", line=dict(color=C_PB, dash="dot")), row=2, col=1)
+fig.add_trace(go.Scatter(x=xx, y=np.asarray(tr_sel["P_EB"], float)[i0:i1] / 1000.0, name="P_EB", line=dict(color=C_EB)), row=1, col=1)
+fig.add_trace(go.Scatter(x=xx, y=np.asarray(tr_sel["P_PB"], float)[i0:i1] / 1000.0, name="P_PB", line=dict(color=C_PB)), row=1, col=1)
+fig.add_trace(go.Scatter(x=xx, y=np.asarray(tr_sel["SOC_EB"], float)[i0:i1] * 100.0, name="SOC_EB", line=dict(color=C_EB, dash="dot")), row=2, col=1)
+fig.add_trace(go.Scatter(x=xx, y=np.asarray(tr_sel["SOC_PB"], float)[i0:i1] * 100.0, name="SOC_PB", line=dict(color=C_PB, dash="dot")), row=2, col=1)
 fig.add_vline(x=t_sel, line=dict(color="#EF4444", dash="dash"))
 fig.update_layout(height=460, margin=dict(t=50, b=30), hovermode="x unified", legend=dict(orientation="h", y=1.12))
 st.plotly_chart(fig, use_container_width=True)
 
 
-# Construction de la décision (variante neuro-symbolique)
+# Pipeline de décision — adapté à la stratégie sélectionnée
 
-if "EMS_MLP_neurosymbolic" in resultats:
-    st.subheader("🧠 Construction de la décision (MLP neuro-symbolique)")
-    tr_ns = resultats["EMS_MLP_neurosymbolic"]
-    soc_eb_ns = float(tr_ns["SOC_EB"][instant])
-    soc_pb_ns = float(tr_ns["SOC_PB"][instant])
-    alpha_final_ns = float(tr_ns["alpha_final"][instant])
-    alpha_req_ns = float(tr_ns["alpha_requested"][instant]) if "alpha_requested" in tr_ns else alpha_final_ns
-    alpha_fuzzy = float(
-        alpha_fuzzy_calc(np.array([soc_eb_ns]), np.array([soc_pb_ns]), np.array([p_dem]), np.array([accel]))["alpha"][0]
+st.subheader(f"🧩 Comment {nom_affichage(strategie)} construit sa décision")
+
+is_ns = "neurosymbolic" in strategie
+is_fuzzy = strategie == "EMS_fuzzy_logic"
+is_phys = strategie == "EMS_power_limitation"
+
+alpha_fuzzy_sel = _alpha_fuzzy(soc_eb_sel, soc_pb_sel, p_dem, accel)
+etats_txt = ", ".join(etats_actifs) if etats_actifs else "aucun état particulier"
+filtre_txt = "correction appliquée" if corr_sel else "aucune correction"
+decision_txt = f"{alpha_final * 100:.0f} % pour la PB"
+
+if is_ns:
+    etapes = [
+        ("Ontologie OntoHESS", "concepts et seuils décrivant le HESS"),
+        ("États symboliques détectés", etats_txt),
+        ("Règles expertes floues", f"{alpha_fuzzy_sel * 100:.0f} % pour la PB"),
+        ("Correction du réseau neuronal", f"{(alpha_req - alpha_fuzzy_sel) * 100:+.0f} %"),
+        ("Filtre physique de sécurité", filtre_txt),
+        ("Décision finale", decision_txt),
+    ]
+    note = (
+        "La décision part des connaissances de l'ontologie, puis des règles floues ; "
+        "le réseau n'apporte qu'une correction bornée."
     )
-    delta = alpha_req_ns - alpha_fuzzy
-
-    _etats_ns = core.compute_symbolic_states(p_dem, soc_eb_ns, soc_pb_ns)
-    _libelles_etats = {
-        "high_power_demand": "Forte demande de puissance",
-        "EB_low_SOC": "SOC batterie Énergie faible",
-        "EB_available": "Batterie Énergie disponible",
-        "PB_available": "Batterie Puissance disponible",
-        "regenerative_braking": "Freinage régénératif",
-        "converter_risk": "Convertisseur proche de sa limite",
-    }
-    _detectes = [lib for cle, lib in _libelles_etats.items() if _etats_ns.get(cle)]
-
-    def _fleche():
-        st.markdown(f"<div style='color:{C_GRIS};font-size:1.1em'>&#8595;</div>", unsafe_allow_html=True)
-
-    with st.container(border=True):
-        st.markdown("**Ontologie OntoHESS**")
-        st.caption("Concepts et seuils décrivant les composants et les états du HESS.")
-        _fleche()
-        st.markdown("**Détection des états symboliques**")
-        if _detectes:
-            for _etat in _detectes:
-                st.markdown(f"- {_etat}")
-        else:
-            st.caption("Aucun état particulier détecté : situation nominale.")
-        _fleche()
-        st.markdown(f"**Règles expertes floues** — {alpha_fuzzy * 100:.0f} % pour la PB")
-        _fleche()
-        st.markdown(f"**Correction du réseau neuronal** — {delta * 100:+.0f} %")
-        _fleche()
-        st.markdown("**Filtre physique de sécurité**")
-        _fleche()
-        st.markdown(f"**Décision finale** — {alpha_final_ns * 100:.0f} % pour la PB")
-
-    st.caption(
-        "La décision ne sort pas directement du réseau : elle passe d'abord par les "
-        "connaissances métier de l'ontologie, puis par les règles expertes. Le réseau "
-        "n'apporte qu'une correction bornée."
+elif is_fuzzy:
+    etapes = [
+        ("Ontologie OntoHESS", "concepts et seuils décrivant le HESS"),
+        ("États symboliques détectés", etats_txt),
+        ("Règles expertes floues", f"{alpha_fuzzy_sel * 100:.0f} % pour la PB"),
+        ("Filtre physique de sécurité", filtre_txt),
+        ("Décision finale", decision_txt),
+    ]
+    note = "Décision entièrement issue des règles expertes formalisées par l'ontologie."
+elif is_phys:
+    etapes = [
+        ("Ontologie OntoHESS", "règles SWRL de priorité à la batterie Énergie"),
+        ("États symboliques détectés", etats_txt),
+        ("Règle physique déterministe", "l'EB fournit en priorité, dans ses limites"),
+        ("Filtre physique de sécurité", filtre_txt),
+        ("Décision finale", decision_txt),
+    ]
+    note = "Décision déterministe dont les branches correspondent aux règles SWRL de l'ontologie."
+else:
+    etapes = [
+        ("Réseau neuronal", "prédit directement la répartition"),
+        ("Filtre physique de sécurité", filtre_txt),
+        ("Décision finale", decision_txt),
+    ]
+    note = (
+        f"À titre de repère, la logique floue proposerait {alpha_fuzzy_sel * 100:.0f} % "
+        "pour la PB — mais cette stratégie ne s'appuie pas dessus."
     )
-
-
-# Raisonnement ontologique : les concepts métier actifs à cet instant
-
-st.subheader("🧩 Raisonnement ontologique")
-
-# L'état de charge dépend de la stratégie : on prend celle sélectionnée plus haut
-# pour les courbes, afin que le raisonnement porte sur un état cohérent.
-soc_eb_ref = float(tr_f["SOC_EB"][instant])
-soc_pb_ref = float(tr_f["SOC_PB"][instant])
 
 with st.container(border=True):
-    st.markdown(
-        "L'ontologie **OntoHESS** décrit les composants du système (batterie Énergie, "
-        "batterie Puissance, convertisseur, charge) ainsi que les seuils et les états "
-        "de fonctionnement. À partir des mesures physiques de cet instant, elle permet "
-        "d'identifier automatiquement les concepts métier actifs."
-    )
-    st.caption(
-        f"États de charge pris comme référence : ceux de **{nom_affichage(strategie_focus)}** "
-        "(la stratégie choisie pour les courbes ci-dessus)."
-    )
+    for i, (titre, detail) in enumerate(etapes):
+        st.markdown(f"**{titre}**" + (f" — {detail}" if detail else ""))
+        if i < len(etapes) - 1:
+            _fleche()
 
-    _interp = ox.interpretation_ontologique(p_dem, soc_eb_ref, soc_pb_ref)
-    st.markdown(
-        f"**État de fonctionnement inféré** : {ox.ETATS_ONTOLOGIE[_interp['etat']]} "
-        f"(`{_interp['etat']}`)"
-    )
-
-    _concepts = ox.concepts_actifs(p_dem, soc_eb_ref, soc_pb_ref)
-    _actifs = [c for c in _concepts if c["actif"]]
-    if _actifs:
-        st.markdown("**États détectés**")
-        for _c in _actifs:
-            st.markdown(f"- {_c['libelle']}")
-    else:
-        st.caption("Aucun concept particulier détecté : la situation est nominale.")
+st.caption(note)
 
 
-# Raisonnement de chaque modèle (langage naturel)
+# Évaluer sur l'ensemble du cycle (à la place du classement instantané)
 
-st.subheader("💬 Raisonnement de chaque modèle")
-for nom in noms:
-    tr = resultats[nom]
-    p_eb = float(tr["P_EB"][instant])
-    p_pb = float(tr["P_PB"][instant])
-    corr = bool(tr["correction_applied"][instant]) if "correction_applied" in tr else False
-    tot = abs(p_eb) + abs(p_pb)
-    part_eb = 100.0 * abs(p_eb) / tot if tot > 1.0 else 0.0
-    part_pb = 100.0 * abs(p_pb) / tot if tot > 1.0 else 0.0
-    st.markdown(f"- **{nom_affichage(nom)}** : « {_pensee(part_eb, part_pb, corr, p_dem)} »")
-
-
-# Classement à cet instant
-
-st.subheader("🏆 Quelle stratégie est la plus adaptée à cet instant ?")
-st.caption(
-    "Indice multicritère pondéré, calculé sur l'état du système à cet instant. "
-    "Sauf le critère de sécurité (noté en absolu), chaque critère est normalisé "
-    "entre les stratégies comparées."
+st.divider()
+st.subheader("Et sur l'ensemble du cycle ?")
+st.markdown(
+    "Un EMS ne se juge pas sur un instant isolé : envoyer de la puissance vers la PB "
+    "maintenant ne se justifie qu'au regard de ce qu'il en reste plus tard dans le "
+    "cycle. Le classement des stratégies se fait donc sur le cycle complet."
 )
+if st.button("Aller à « Comparer les méthodes »", type="primary"):
+    st.switch_page("vues/5_Comparaison_des_strategies.py")
 
-if abs(p_dem) <= EPS_POWER_W:
-    st.info("Demande quasi nulle à cet instant : l'évaluation n'est pas significative.")
-    classement = []
-    points_crit = {}
-else:
-    points_crit, totaux = _evaluer(resultats, instant, p_dem, accel)
-    classement = sorted(totaux.items(), key=lambda kv: (-kv[1], kv[0]))
-
-    cols = st.columns(len(classement))
-    for col, (nom_c, score_c), medaille in zip(cols, classement, MEDAILLES):
-        tr = resultats[nom_c]
-        p_eb = float(tr["P_EB"][instant])
-        p_pb = float(tr["P_PB"][instant])
-        corr = bool(tr["correction_applied"][instant]) if "correction_applied" in tr else False
-        tot = abs(p_eb) + abs(p_pb)
-        part_eb = 100.0 * abs(p_eb) / tot if tot > 1.0 else 0.0
-        part_pb = 100.0 * abs(p_pb) / tot if tot > 1.0 else 0.0
-        with col:
-            with st.container(border=True):
-                st.markdown(
-                    f"<div style='text-align:center;font-size:22px'>{medaille}</div>"
-                    f"<div style='text-align:center;font-weight:700'>{nom_affichage(nom_c)}</div>"
-                    f"<div style='text-align:center;color:{C_GRIS};font-size:.85em'>{score_c:.0f}/100</div>"
-                    f"<div style='text-align:center;color:{C_GRIS};font-size:.8em'>{_tag_decision(part_eb, part_pb, corr)}</div>",
-                    unsafe_allow_html=True,
-                )
-
-    # D'où vient le score : le détail par critère, pour toutes les stratégies.
-    st.markdown("**D'où vient le score ?**")
-    lignes_score = []
-    for libelle, poids in CRITERES_INSTANT:
-        ligne = {"Critère (poids)": f"{libelle} ({poids})"}
-        for nom_c in resultats:
-            ligne[nom_affichage(nom_c)] = f"{points_crit[nom_c][libelle]:.0f}"
-        lignes_score.append(ligne)
-    ligne_finale = {"Critère (poids)": "Score final (100)"}
-    for nom_c in resultats:
-        ligne_finale[nom_affichage(nom_c)] = f"{sum(points_crit[nom_c].values()):.0f}"
-    lignes_score.append(ligne_finale)
-
-    st.dataframe(pd.DataFrame(lignes_score).set_index("Critère (poids)"), use_container_width=True)
-    st.caption(
-        "Le temps de calcul n'entre pas dans l'indice : ce n'est pas une propriété de "
-        "l'instant, et aucune mesure fiable par stratégie n'est disponible ici."
-    )
-
-
-# Verdict + à retenir
-
-st.subheader("📋 Verdict")
-if classement:
-    nom_best, score_best = classement[0]
-    detail_best = points_crit[nom_best]
-    forts = [
-        libelle
-        for libelle, poids in CRITERES_INSTANT
-        if poids > 0 and detail_best[libelle] >= 0.9 * poids
-    ]
-    faibles = [
-        libelle
-        for libelle, poids in CRITERES_INSTANT
-        if poids > 0 and detail_best[libelle] <= 0.4 * poids
-    ]
-
-    with st.container(border=True):
-        st.markdown(
-            f"À cet instant, **{nom_affichage(nom_best)}** présente le **meilleur compromis** "
-            f"selon les {len(CRITERES_INSTANT)} critères d'évaluation retenus "
-            f"({score_best:.0f}/100)."
-        )
-        if forts:
-            st.markdown("Points forts à cet instant :")
-            for f in forts:
-                st.markdown(f"- {f}")
-        if faibles:
-            st.markdown("Points faibles à cet instant :")
-            for f in faibles:
-                st.markdown(f"- {f}")
-        st.caption(
-            "Ce résultat est **local à cet instant du cycle** et ne préjuge pas des "
-            "performances globales sur l'ensemble de la simulation. Pour le classement "
-            "sur tout le cycle, voir « Comparer les méthodes »."
-        )
-
-    st.subheader("🎓 Ce qu'il faut retenir")
-    alphas = np.array([float(resultats[nm]["alpha_final"][instant]) for nm in noms])
-    ecart = float(alphas.max() - alphas.min())
-    ns_noms = [nm for nm in noms if "neurosymbolic" in nm]
-    corr_ns = sum(
-        1 for nm in ns_noms if "correction_applied" in resultats[nm] and bool(resultats[nm]["correction_applied"][instant])
-    )
-    corr_autres = sum(
-        1
-        for nm in noms
-        if nm not in ns_noms and "correction_applied" in resultats[nm] and bool(resultats[nm]["correction_applied"][instant])
-    )
-    if ecart < 0.10:
-        phrase = "À cet instant, les modèles prennent des décisions très proches."
-    else:
-        phrase = f"À cet instant, les modèles divergent nettement (écart d'alpha de {ecart:.2f})."
-    if ns_noms and corr_ns < corr_autres:
-        phrase += (
-            " Ici, les variantes neuro-symboliques nécessitent moins d'interventions du "
-            "filtre de sécurité que les autres stratégies."
-        )
-    elif ns_noms and corr_ns > corr_autres:
-        phrase += (
-            " À cet instant, les variantes neuro-symboliques nécessitent davantage "
-            "d'interventions du filtre que les autres stratégies."
-        )
-    st.info(phrase)
-
-    st.caption(
-        "Rappel méthodologique : les variantes neuro-symboliques exploitent les "
-        "connaissances de l'ontologie OntoHESS (concepts, seuils et règles) **avant** "
-        "la correction neuronale. Leur décision part donc d'une base déjà cohérente "
-        "avec les contraintes physiques, que le réseau ne fait qu'ajuster à la marge."
-    )
-
-
-from core.navigation import pied_navigation
 
 pied_navigation("vues/4_Moteur_Neurosymbolique.py")
