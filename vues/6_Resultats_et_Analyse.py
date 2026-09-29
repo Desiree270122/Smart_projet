@@ -1,4 +1,3 @@
-
 import sys
 from pathlib import Path
  
@@ -17,7 +16,12 @@ from core.resultats import (
     nom_affichage,
 )
 from core.style import couleur, COULEUR_NEUTRE
-from core.navigation import pied_navigation
+
+try:
+    from core.navigation import pied_navigation
+except ModuleNotFoundError:
+    def pied_navigation(*_args, **_kwargs):
+        pass
  
  
 st.title("Explorer les résultats")
@@ -282,3 +286,5 @@ with st.expander("Indicateurs bruts, toutes stratégies"):
  
 pied_navigation("vues/6_Resultats_et_Analyse.py")
  
+ 
+

@@ -12,22 +12,7 @@ from core.resultats import (
     nom_affichage,
     CRITERES,
 )
-
-
-COULEURS = {
-    "EMS_power_limitation": "#9AA0A6",
-    "EMS_fuzzy_logic": "#C9A227",
-    "EMS_MLP": "#6FB1E8",
-    "EMS_LSTM": "#1F6FB2",
-    "EMS_GNN": "#8E6FD0",
-    "EMS_MLP_neurosymbolic": "#E8734A",
-    "EMS_LSTM_neurosymbolic": "#2E9E6B",
-}
-COULEUR_DEFAUT = "#9AA0A6"
-
-
-def couleur(nom):
-    return COULEURS.get(nom, COULEURS.get(nom_affichage(nom), COULEUR_DEFAUT))
+from core.style import couleur
 
 
 COLONNES = {
