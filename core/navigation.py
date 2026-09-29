@@ -44,7 +44,7 @@ def pied_navigation(cible_courante: str):
         with col_prec:
             if st.button(
                 f"Précédent : {libelle_prec}",
-                use_container_width=True,
+                width="stretch",
                 key="nav_precedent",
             ):
                 st.switch_page(cible_prec)
@@ -54,7 +54,7 @@ def pied_navigation(cible_courante: str):
         with col_suiv:
             if st.button(
                 f"Suivant : {libelle_suiv}",
-                use_container_width=True,
+                width="stretch",
                 type="primary",
                 key="nav_suivant",
             ):

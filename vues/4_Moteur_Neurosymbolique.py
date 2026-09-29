@@ -152,7 +152,7 @@ for nom in noms:
             "Filtre": "corrigée" if corr else "—",
         }
     )
-st.dataframe(pd.DataFrame(lignes).set_index("Stratégie"), use_container_width=True)
+st.dataframe(pd.DataFrame(lignes).set_index("Stratégie"), width="stretch")
 st.caption(
     "alpha est la fraction de puissance confiée à la PB. « Écart / base floue » = "
     "distance à ce que proposerait la logique floue ; « Écart / demandé » = correction "
@@ -177,7 +177,7 @@ fig_alpha.update_layout(
     xaxis=dict(title="alpha — part confiée à la PB", range=[0, 1]),
     showlegend=False,
 )
-st.plotly_chart(fig_alpha, use_container_width=True)
+st.plotly_chart(fig_alpha, width="stretch")
 st.caption(f"En vert : la stratégie sélectionnée ({nom_affichage(strategie)}).")
 
 
@@ -200,7 +200,7 @@ fig.add_trace(go.Scatter(x=xx, y=np.asarray(tr_sel["SOC_EB"], float)[i0:i1] * 10
 fig.add_trace(go.Scatter(x=xx, y=np.asarray(tr_sel["SOC_PB"], float)[i0:i1] * 100.0, name="SOC_PB", line=dict(color=C_PB, dash="dot")), row=2, col=1)
 fig.add_vline(x=t_sel, line=dict(color="#EF4444", dash="dash"))
 fig.update_layout(height=460, margin=dict(t=50, b=30), hovermode="x unified", legend=dict(orientation="h", y=1.12))
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width="stretch")
 
 
 # Pipeline de décision — adapté à la stratégie sélectionnée

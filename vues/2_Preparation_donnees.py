@@ -148,7 +148,7 @@ st.success(
 with st.expander("Aperçu des données brutes"):
     st.dataframe(
         df_brut.head(20),
-        use_container_width=True,
+        width="stretch",
     )
 
 # 2. Sélection des colonnes, unités, répétitions
@@ -761,7 +761,7 @@ tableau_resultats = pd.DataFrame([
     },
 ])
 
-st.dataframe(tableau_resultats, use_container_width=True, hide_index=True)
+st.dataframe(tableau_resultats, width="stretch", hide_index=True)
 
 st.session_state["architecture_batteries"] = {
     "EB": {"n_serie": eb_n_serie, "n_parallele": eb_n_parallele, "masse_cellule": eb_masse_cellule,

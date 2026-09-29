@@ -256,7 +256,7 @@ st.dataframe(
             },
         ]
     ).set_index("Étape"),
-    use_container_width=True,
+    width="stretch",
 )
 
 st.caption(
@@ -298,7 +298,7 @@ for cle in core.MODEL_ORDER:
         }
     )
 
-st.dataframe(pd.DataFrame(_lignes_comp).set_index("Stratégie"), use_container_width=True)
+st.dataframe(pd.DataFrame(_lignes_comp).set_index("Stratégie"), width="stretch")
 
 st.info(
     "Le modèle physique n'est pas dépourvu d'ontologie : ses branches de décision "

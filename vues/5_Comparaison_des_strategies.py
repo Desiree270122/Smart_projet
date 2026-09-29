@@ -174,7 +174,7 @@ fig_rang.update_layout(
     yaxis_title=None,
     showlegend=False,
 )
-st.plotly_chart(fig_rang, use_container_width=True)
+st.plotly_chart(fig_rang, width="stretch")
 
 
 # 4 — Tableau unique, stratégies en lignes
@@ -201,7 +201,7 @@ for n in ordre + [x for x in noms if x not in ordre]:
         ligne[entete] = texte + (" ★" if n in meilleurs[nom_c] else "")
     lignes.append(ligne)
 
-st.dataframe(pd.DataFrame(lignes).set_index("Stratégie"), use_container_width=True)
+st.dataframe(pd.DataFrame(lignes).set_index("Stratégie"), width="stretch")
 
 
 # 5 — Courbes SOC, légende unique
@@ -243,8 +243,8 @@ def courbe(cle_soc, titre):
 
 
 g1, g2 = st.columns(2)
-g1.plotly_chart(courbe("SOC_EB", "Batterie Énergie"), use_container_width=True)
-g2.plotly_chart(courbe("SOC_PB", "Batterie Puissance"), use_container_width=True)
+g1.plotly_chart(courbe("SOC_EB", "Batterie Énergie"), width="stretch")
+g2.plotly_chart(courbe("SOC_PB", "Batterie Puissance"), width="stretch")
 
 
 # 6 — Détails
@@ -299,7 +299,7 @@ with st.expander("Tableau complet des métriques brutes"):
             v = m.get(cle, float("nan"))
             ligne[lib] = f.format(v) if v == v else "—"
         brut.append(ligne)
-    st.dataframe(pd.DataFrame(brut).set_index("Stratégie"), use_container_width=True)
+    st.dataframe(pd.DataFrame(brut).set_index("Stratégie"), width="stretch")
 
 from core.navigation import pied_navigation
 

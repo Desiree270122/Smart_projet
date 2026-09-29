@@ -156,7 +156,7 @@ fig_pos.update_layout(
     xaxis=dict(title="0 = pire des sept   ·   1 = meilleure des sept", range=[-0.06, 1.06]),
     yaxis=dict(title=None, autorange="reversed"),
 )
-st.plotly_chart(fig_pos, use_container_width=True)
+st.plotly_chart(fig_pos, width="stretch")
  
  
 # 4 — Trajectoires : deux courbes, pas sept
@@ -194,8 +194,8 @@ def _trajectoire(cle_soc, titre):
  
  
 g1, g2 = st.columns(2)
-g1.plotly_chart(_trajectoire("SOC_EB", "Batterie Énergie"), use_container_width=True)
-g2.plotly_chart(_trajectoire("SOC_PB", "Batterie Puissance"), use_container_width=True)
+g1.plotly_chart(_trajectoire("SOC_EB", "Batterie Énergie"), width="stretch")
+g2.plotly_chart(_trajectoire("SOC_PB", "Batterie Puissance"), width="stretch")
  
 chute_c = (float(resultats[cible]["SOC_EB"][0]) - float(resultats[cible]["SOC_EB"][-1])) * 100
 chute_r = (float(resultats[ref]["SOC_EB"][0]) - float(resultats[ref]["SOC_EB"][-1])) * 100
@@ -238,7 +238,7 @@ fig_i.update_layout(
     yaxis_title="Courant (A)", height=400, showlegend=False,
     margin=dict(t=20, b=90, l=50, r=15),
 )
-st.plotly_chart(fig_i, use_container_width=True)
+st.plotly_chart(fig_i, width="stretch")
  
 rms_c, rms_r = _valeur(cible, "i_pb_rms"), _valeur(ref, "i_pb_rms")
 pic_c = float(stats[cible]["i_pb_max"])
@@ -277,7 +277,7 @@ with st.expander("Indicateurs bruts, toutes stratégies"):
                 "Violations SOC": "{:.0f}",
             }
         ),
-        use_container_width=True,
+        width="stretch",
     )
     st.caption(
         "Pour classer les stratégies entre elles, voir la page « Comparer les méthodes »."

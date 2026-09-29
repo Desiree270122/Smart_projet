@@ -145,14 +145,14 @@ with hero_g:
     st.write("")
     b1, b2 = st.columns(2)
     with b1:
-        if st.button("🚀 Explorer une démonstration", type="primary", use_container_width=True):
+        if st.button("🚀 Explorer une démonstration", type="primary", width="stretch"):
             st.switch_page("vues/5_Comparaison_des_strategies.py")
     with b2:
-        if st.button("🧪 Nouvelle simulation", use_container_width=True):
+        if st.button("🧪 Nouvelle simulation", width="stretch"):
             st.switch_page("vues/8_Simulation_cycle_personnalise.py")
 
 with hero_d:
-    st.plotly_chart(_schema_hess(), use_container_width=True)
+    st.plotly_chart(_schema_hess(), width="stretch")
 
 
 # Le système, composant par composant (interactif)
@@ -161,7 +161,7 @@ st.caption("Cliquez sur un composant pour comprendre son rôle dans le système.
 
 comp1, comp2, comp3, comp4 = st.columns(4)
 with comp1:
-    with st.popover("🔋 Batterie Énergie", use_container_width=True):
+    with st.popover("🔋 Batterie Énergie", width="stretch"):
         st.markdown(
             "**Batterie Énergie (EB)**\n\n"
             "- Grande capacité de stockage\n"
@@ -169,7 +169,7 @@ with comp1:
             "- Assure l'autonomie du véhicule"
         )
 with comp2:
-    with st.popover("⚡ Batterie Puissance", use_container_width=True):
+    with st.popover("⚡ Batterie Puissance", width="stretch"):
         st.markdown(
             "**Batterie Puissance (PB)**\n\n"
             "- Très forte puissance instantanée\n"
@@ -177,14 +177,14 @@ with comp2:
             "- Protège la batterie Énergie des sollicitations brutales"
         )
 with comp3:
-    with st.popover("🔄 Convertisseur", use_container_width=True):
+    with st.popover("🔄 Convertisseur", width="stretch"):
         st.markdown(
             "**Convertisseur**\n\n"
             "- Répartit dynamiquement la puissance entre les deux batteries\n"
             "- Possède ses propres limites de puissance à respecter"
         )
 with comp4:
-    with st.popover("🚗 Moteur et véhicule", use_container_width=True):
+    with st.popover("🚗 Moteur et véhicule", width="stretch"):
         st.markdown(
             "**Moteur et véhicule**\n\n"
             "- Le cycle de conduite impose à chaque instant une puissance demandée\n"
@@ -330,11 +330,11 @@ st.write("")
 
 acces1, acces2, acces3 = st.columns(3)
 with acces1:
-    if st.button("Explorer les résultats", type="primary", use_container_width=True):
+    if st.button("Explorer les résultats", type="primary", width="stretch"):
         st.switch_page("vues/5_Comparaison_des_strategies.py")
 with acces2:
-    if st.button("Architecture des modèles", use_container_width=True):
+    if st.button("Architecture des modèles", width="stretch"):
         st.switch_page("vues/9_Architecture_des_modeles.py")
 with acces3:
-    if st.button("Préparation des données", use_container_width=True):
+    if st.button("Préparation des données", width="stretch"):
         st.switch_page("vues/2_Preparation_donnees.py")

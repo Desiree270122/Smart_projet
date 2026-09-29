@@ -165,7 +165,7 @@ with col_cyc:
         i3.metric("État", "Données prêtes")
 with col_mod:
     st.write("")
-    if st.button("Modifier le cycle", use_container_width=True):
+    if st.button("Modifier le cycle", width="stretch"):
         st.switch_page("vues/2_Preparation_donnees.py")
 
 
@@ -210,7 +210,7 @@ table_editee = st.data_editor(
     base_table,
     key="table_strategies",
     hide_index=True,
-    use_container_width=True,
+    width="stretch",
     disabled=["Stratégie", "Famille", "Explicabilité", "Coût en temps"],
     column_config={
         "Simuler": st.column_config.CheckboxColumn("Simuler", help="Inclure cette stratégie"),

@@ -488,11 +488,11 @@ with tab_apercu:
     g1, g2 = st.columns(2)
     with g1:
         if total_mag > 1.0:
-            st.plotly_chart(_donut_repartition(part_eb, part_pb), use_container_width=True)
+            st.plotly_chart(_donut_repartition(part_eb, part_pb), width="stretch")
         else:
             st.info("Demande quasi nulle : les batteries sont au repos.")
     with g2:
-        st.plotly_chart(_jauge_alpha(alpha_final), use_container_width=True)
+        st.plotly_chart(_jauge_alpha(alpha_final), width="stretch")
 
     st.subheader("Résumé")
     st.success(_resume_texte(strategie, p_dem, part_eb, part_pb, correction))
@@ -581,7 +581,7 @@ with tab_raison:
 
     st.subheader("Sous-graphe de connaissances")
     _interp_g = ox.interpretation_ontologique(p_dem, soc_eb, soc_pb)
-    st.plotly_chart(_graphe_connaissances(_interp_g["etat"]), use_container_width=True)
+    st.plotly_chart(_graphe_connaissances(_interp_g["etat"]), width="stretch")
     st.caption(
         f"Individus et relations réellement déclarés dans l'ontologie. L'état "
         f"**{ox.ETATS_ONTOLOGIE[_interp_g['etat']]}** (`{_interp_g['etat']}`) est celui "
@@ -604,7 +604,7 @@ with tab_raison:
         xaxis_title="Temps (s)", yaxis_title="Puissance (kW)", height=320,
         margin=dict(t=20, b=40), hovermode="x unified",
     )
-    st.plotly_chart(fig_ctx, use_container_width=True)
+    st.plotly_chart(fig_ctx, width="stretch")
 
     st.subheader("Ce que la stratégie utilise réellement")
 
@@ -640,7 +640,7 @@ with tab_raison:
         forces = np.asarray(res["strengths"][0], dtype=float)
         fig_r = go.Figure(go.Bar(x=list(FUZZY_RULE_NAMES), y=forces, marker_color=C_EB))
         fig_r.update_layout(title="Force de chaque règle (0 à 1)", yaxis_title="Force", height=320, margin=dict(t=40, b=80))
-        st.plotly_chart(fig_r, use_container_width=True)
+        st.plotly_chart(fig_r, width="stretch")
 
         actives = sorted(
             [(FUZZY_RULE_NAMES[i], forces[i]) for i in range(len(FUZZY_RULE_NAMES)) if forces[i] > 0.05],
@@ -688,7 +688,7 @@ with tab_raison:
         couleurs = [C_NON if v < 0 else C_EB for v in contrib]
         fig_f = go.Figure(go.Bar(x=[LABELS_FEATURES[c] for c in MLP_INPUT_COLS], y=contrib, marker_color=couleurs))
         fig_f.update_layout(title="Influence de chaque entrée sur alpha", yaxis_title="Contribution", height=320, margin=dict(t=40, b=40))
-        st.plotly_chart(fig_f, use_container_width=True)
+        st.plotly_chart(fig_f, width="stretch")
         st.caption("Bleu = pousse vers plus de PB ; rouge = pousse vers plus d'EB.")
         st.info(ox.expliquer_importances([LABELS_FEATURES[c] for c in MLP_INPUT_COLS], contrib))
 
@@ -722,7 +722,7 @@ with tab_raison:
         ordre = list(np.argsort(pct)[::-1])
         fig_l = go.Figure(go.Bar(x=[labels[i] for i in ordre], y=[pct[i] for i in ordre], marker_color=C_EB))
         fig_l.update_layout(title="Importance des entrées (%)", yaxis_title="%", height=340, margin=dict(t=40, b=110))
-        st.plotly_chart(fig_l, use_container_width=True)
+        st.plotly_chart(fig_l, width="stretch")
         st.info(ox.expliquer_importances(labels, imp))
 
         # Lecture temporelle : sur quelle partie de la fenêtre la décision se joue-t-elle ?
@@ -759,7 +759,7 @@ with tab_raison:
         imp_g = np.abs((x_g.grad * x_g).detach().cpu().numpy()).sum(axis=1)
         total_g = imp_g.sum()
         pct_g = imp_g / total_g * 100.0 if total_g > 0 else imp_g
-        st.plotly_chart(_graphe_gnn(pct_g, edge), use_container_width=True)
+        st.plotly_chart(_graphe_gnn(pct_g, edge), width="stretch")
         _noms_noeuds = [LABELS_NOEUDS.get(n, n) for n in GNN_NODE_NAMES]
         st.info(ox.expliquer_importances(_noms_noeuds, pct_g))
         _ordre_g = list(np.argsort(pct_g)[::-1])
