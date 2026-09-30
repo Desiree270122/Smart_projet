@@ -1,11 +1,10 @@
 """
 core/instant.py — Choix de l'instant analysé, commun à toutes les pages.
 
-« Analyse instantanée », « Pourquoi cette décision ? » et « Base de
-connaissances » passent toutes par ici : même curseur (en secondes du cycle),
-même conversion temps -> index. Sans cela, une page choisissait un temps (qui
-commence à 1 s) et les autres un index (qui commence à 0) : le « même » instant
-affichait des valeurs décalées d'un pas.
+Toute page qui analyse un instant du cycle passe par ici : même curseur (en
+secondes du cycle), même conversion temps -> index. Auparavant, une page
+choisissait un temps (qui commence à 1 s) et les autres un index (qui commence
+à 0) : le « même » instant affichait des valeurs décalées d'un pas.
 
 L'instant choisi est aussi conservé d'une page à l'autre.
 """

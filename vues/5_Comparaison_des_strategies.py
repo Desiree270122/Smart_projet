@@ -1,6 +1,5 @@
 
 
-import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -207,7 +206,7 @@ if hors_classement:
 
 # Les quatre familles de l'offre de stage
 
-st.subheader("🧩 Les quatre familles de stratégies")
+st.subheader("Les quatre familles de stratégies")
 st.caption(
     "Le projet 2SMART compare quatre approches : règles fixes, ontologie seule, "
     "apprentissage seul et approche hybride (ici neurosymbolique). Pour chacune, sa "
@@ -234,7 +233,7 @@ st.dataframe(pd.DataFrame(lignes_f).set_index("Famille"), width="stretch")
 
 # 3 — Classement sur ce critère
 
-st.subheader("🏅 Classement sur ce critère")
+st.subheader("Classement sur ce critère")
 st.caption(
     "Les stratégies au résultat identique (à la précision affichée) partagent le même rang."
     + (" En grisé, en bas : les stratégies hors classement." if ordre_hors else "")
@@ -273,7 +272,7 @@ st.plotly_chart(fig_rang, width="stretch")
 
 # 4 — Tableau unique, stratégies en lignes
 
-st.subheader("📊 Toutes les stratégies, critère par critère")
+st.subheader("Toutes les stratégies, critère par critère")
 st.caption(
     "★ = meilleure valeur parmi les stratégies classées (plusieurs ★ si ex æquo). "
     "La flèche indique le sens favorable."
@@ -299,7 +298,7 @@ st.dataframe(pd.DataFrame(lignes).set_index("Stratégie"), width="stretch")
 
 # Apport du symbolique : même réseau, sans puis avec composante symbolique
 
-st.subheader("🔬 Apport du symbolique")
+st.subheader("Apport du symbolique")
 st.caption(
     "Même réseau, sans puis avec composante symbolique : c'est la comparaison qui isole "
     "ce qu'apporte le symbolique. Les deux variantes ne l'intègrent pas de la même façon : "
@@ -348,7 +347,7 @@ for seul, ns in PAIRES_SYMBOLIQUE:
 
 # Bilan des pertes (objectif du projet : rendement global et pertes du convertisseur)
 
-st.subheader("🔋 Bilan des pertes")
+st.subheader("Bilan des pertes")
 st.caption(
     "Pertes par effet Joule dans chaque batterie (R·I²) et pertes du convertisseur, qui "
     "ne traite que la différence de tension entre les deux batteries (architecture en "
@@ -431,52 +430,15 @@ with st.expander("Hypothèses et équations du bilan"):
     )
 
 
-# 5 — Courbes SOC, légende unique
-
-st.subheader("📉 Évolution des états de charge")
 st.caption(
-    "Plus une courbe descend, plus la batterie a été sollicitée. "
-    "Les deux graphes partagent la même légende."
+    "Pour suivre l'évolution des états de charge d'une stratégie face à une référence, "
+    "voir « Explorer les résultats »."
 )
-
-chips = "".join(
-    f"<span style='display:inline-flex;align-items:center;margin:0 14px 6px 0;font-size:0.85rem'>"
-    f"<span style='width:14px;height:3px;background:{couleur(n)};margin-right:6px'></span>"
-    f"{nom_affichage(n)}</span>"
-    for n in noms
-)
-st.markdown(f"<div style='margin-bottom:8px'>{chips}</div>", unsafe_allow_html=True)
-
-
-def courbe(cle_soc, titre):
-    fig = go.Figure()
-    for n in noms:
-        y = np.asarray(resultats[n][cle_soc], dtype=float) * 100.0
-        pas = max(1, len(y) // 2000)
-        fig.add_trace(
-            go.Scatter(
-                x=np.arange(len(y))[::pas],
-                y=y[::pas],
-                mode="lines",
-                name=nom_affichage(n),
-                line=dict(color=couleur(n), width=1.6),
-            )
-        )
-    fig.update_layout(
-        title=titre, xaxis_title="Temps (s)", yaxis_title="SOC (%)",
-        height=360, showlegend=False, margin=dict(t=45, b=40, l=50, r=15),
-    )
-    return fig
-
-
-g1, g2 = st.columns(2)
-g1.plotly_chart(courbe("SOC_EB", "Batterie Énergie"), width="stretch")
-g2.plotly_chart(courbe("SOC_PB", "Batterie Puissance"), width="stretch")
 
 
 # 6 — Détails
 
-st.subheader("📋 Détails")
+st.subheader("Détails")
 
 with st.expander("Score composite toutes stratégies confondues"):
     def _scores(metriques):

@@ -1,0 +1,7 @@
+# Thème commun à toutes les pages de 2SMART.
+# Sombre : les couleurs des stratégies (core/style.py) et de l'accueil sont réglées
+# pour ce fond. Couleur principale : le bleu de la batterie Énergie, à la place du
+# rouge par défaut de Streamlit (boutons, curseurs, onglets).
+[theme]
+base = "dark"
+primaryColor = "#5B8DEF"

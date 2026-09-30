@@ -123,7 +123,7 @@ FICHES = {
         "entrees": "Puissance demandée, SOC de l'EB",
     },
     "EMS_fuzzy_logic": {
-        "famille": "Logique floue (inférence Mamdani)",
+        "famille": "Logique floue (moyenne pondérée des règles)",
         "role": (
             "Traduire des connaissances d'expert en une décision continue, sans "
             "réseau de neurones. Sa sortie sert aussi de point de départ au MLP "
@@ -135,8 +135,9 @@ FICHES = {
             "Ces concepts sont ceux de l'ontologie OntoHESS (seuils de SOC, "
             "conditions de puissance) ; les règles elles-mêmes sont écrites dans le "
             "code, pas lues dans le fichier OWL.",
-            "Le moteur d'inférence agrège les règles activées puis défuzzifie "
-            "pour produire un alpha continu.",
+            "Chaque règle conclut sur une part de la PB ; le moteur calcule alpha "
+            "comme la moyenne de ces conclusions, pondérée par l'activation des "
+            "règles. La contribution de chaque règle à la décision est donc exacte.",
         ],
         "cible": "Aucune : règles expertes fixées à la main.",
         "entrees": "SOC_EB, SOC_PB, puissance demandée, accélération",
@@ -276,49 +277,6 @@ for cle in core.MODEL_ORDER:
 st.divider()
 
 
-# Rôle de l'ontologie dans la chaîne de décision
-
-st.subheader("Comment intervient l'ontologie ?")
-
-st.dataframe(
-    pd.DataFrame(
-        [
-            {
-                "Étape": "Variables physiques",
-                "Rôle d'OntoHESS": "Décrit les composants du HESS (batteries, convertisseur, charge) et leurs grandeurs.",
-            },
-            {
-                "Étape": "Concepts métier",
-                "Rôle d'OntoHESS": "Définit les seuils et les états de fonctionnement : state_Normal, state_Overload_High, state_Overload_Low.",
-            },
-            {
-                "Étape": "Règles expertes",
-                "Rôle d'OntoHESS": "Fournit les règles SWRL comparant puissance et SOC aux seuils déclarés.",
-            },
-            {
-                "Étape": "Modèles neurosymboliques",
-                "Rôle d'OntoHESS": "Fournit les états symboliques donnés en entrée aux deux réseaux (et, pour le MLP, la base floue qu'il corrige).",
-            },
-            {
-                "Étape": "Modèle physique",
-                "Rôle d'OntoHESS": "Aucun à l'exécution ; ses branches correspondent aux règles SWRL R9 à R17, ce qui permet de le relire a posteriori.",
-            },
-            {
-                "Étape": "Explicabilité",
-                "Rôle d'OntoHESS": "Justifie la décision avec des concepts métier compréhensibles et des règles traçables.",
-            },
-        ]
-    ).set_index("Étape"),
-    width="stretch",
-)
-
-st.caption(
-    "Les noms de concepts cités sont ceux réellement déclarés dans "
-    "ontologies/OntoHESS2.owl. Voir la page « Base de connaissances » pour le "
-    "raisonnement pas à pas."
-)
-
-
 # Synthèse comparative des familles
 
 st.subheader("Comparaison des stratégies")
@@ -359,7 +317,8 @@ st.caption(
     "Les modèles neuronaux ont été entraînés hors ligne ; l'application charge "
     "leurs poids et rejoue leurs décisions. Seul le MLP neurosymbolique réutilise la "
     "logique floue comme socle ; le LSTM neurosymbolique ajoute des états "
-    "symboliques à ses entrées."
+    "symboliques à ses entrées. Le détail de l'ontologie, de ses règles et de son usage "
+    "par chaque stratégie est dans « Base de connaissances »."
 )
 
 

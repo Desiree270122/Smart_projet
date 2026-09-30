@@ -1,13 +1,10 @@
 """
-Page « Raisonnement intelligent du système HESS ».
+Page « Base de connaissances » : présente l'ontologie OntoHESS elle-même
+(concepts, système décrit, règles SWRL en clair, usage par chaque stratégie)
+et permet de tester ses règles sur une situation choisie.
 
-Présentation orientée MÉTIER (physiciens, électrotechniciens, spécialistes HESS),
-pas informatique. La page répond à une seule question : « Pourquoi l'EMS a-t-il
-réparti la puissance ainsi entre les deux batteries ? »
-
-Le formalisme (ontologie OWL, règles) est réutilisé tel quel dans le code mais
-présenté en langage physique. Les détails techniques (classes, triplets RDF…)
-sont relégués dans un volet repliable pour les experts.
+L'explication d'une décision du cycle, instant par instant, est dans la page
+« Pourquoi cette décision ? » : elle n'est pas répétée ici.
 """
 
 import sys
@@ -17,438 +14,363 @@ DOSSIER_PROJET = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_PROJET))
 
 import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
-import torch
 
-from ems_core import (
-    analyser_capacites_hess,
-    alpha_fuzzy_calc,
-    resoudre_decision_physique,
-    appliquer_scaler,
-    charger_scaler,
-    load_mlp_simple,
-    MLP_INPUT_COLS,
-    MLP_SCALER_FILE,
-    DEVICE,
-    FUZZY_RULE_NAMES,
-    RULE_LABELS_FR,
-    EPS_POWER_W,
-)
-from core.resultats import assurer_donnees_session, nom_affichage
-from core.navigation import pied_navigation
-from core.instant import choisir_instant
+import ems_core as core
 from core import ontology_explainer as ox
+from core.navigation import pied_navigation
+from core.resultats import assurer_donnees_session, nom_affichage
 
 
-@st.cache_resource(show_spinner=False)
-def _charger_mlp_pour_whatif():
-    """Charge le MLP (et son scaler) pour recalculer sa vraie décision en mode
-    What-if. Mis en cache : chargé une seule fois."""
-    modele = load_mlp_simple()
-    modele.eval()
-    return modele, charger_scaler(MLP_SCALER_FILE)
+C_ETAT = "#E0A030"
+C_NOEUD = "#5B8DEF"
+
+RACINES_FR = {
+    "Component": "Composants",
+    "ElectricalQuantity": "Grandeurs électriques",
+    "ManagementStrategy": "Stratégie de gestion",
+    "SystemState": "États du système",
+}
+
+
+def _graphe_connaissances(etat_actif):
+    """Individus déclarés dans OntoHESS2.owl et leurs relations ; l'état
+    inféré pour la situation testée est mis en avant."""
+    noeuds = {
+        "hess1": (0.0, 2.0, "Système HESS"),
+        "managementStrategy1": (-2.2, 2.0, "Stratégie de gestion"),
+        "batteryE1": (-1.6, 1.0, "Batterie Énergie"),
+        "batteryP1": (0.0, 1.0, "Batterie Puissance"),
+        "converter1": (1.6, 1.0, "Convertisseur"),
+        "load1": (1.6, 0.0, "Charge (moteur)"),
+        **{
+            cle: (x, -1.0, ox.ETATS_ONTOLOGIE_COURTS[cle])
+            for cle, x in (("state_Normal", -1.6), ("state_Overload_High", 0.0), ("state_Overload_Low", 1.6))
+        },
+    }
+    aretes = [
+        ("hess1", "managementStrategy1"), ("hess1", "batteryE1"), ("hess1", "batteryP1"),
+        ("hess1", "converter1"), ("converter1", "batteryE1"), ("converter1", "load1"),
+        ("hess1", "state_Normal"), ("hess1", "state_Overload_High"), ("hess1", "state_Overload_Low"),
+    ]
+    fig = go.Figure()
+    for a, b in aretes:
+        actif = b == etat_actif
+        fig.add_trace(
+            go.Scatter(
+                x=[noeuds[a][0], noeuds[b][0]], y=[noeuds[a][1], noeuds[b][1]], mode="lines",
+                line=dict(color=C_ETAT if actif else "#9AA0AA", width=3 if actif else 1.2),
+                hoverinfo="skip", showlegend=False,
+            )
+        )
+    etats = [c.startswith("state_") for c in noeuds]
+    fig.add_trace(
+        go.Scatter(
+            x=[v[0] for v in noeuds.values()], y=[v[1] for v in noeuds.values()],
+            mode="markers+text",
+            marker=dict(
+                size=[38 if c == etat_actif else (24 if e else 30) for c, e in zip(noeuds, etats)],
+                color=[C_ETAT if c == etat_actif else ("#9AA0AA" if e else C_NOEUD) for c, e in zip(noeuds, etats)],
+                line=dict(color="white", width=2),
+            ),
+            text=[f"{v[2]}<br><span style='font-size:9px'>{c}</span>" for c, v in noeuds.items()],
+            textposition="bottom center", textfont=dict(size=10),
+            hoverinfo="text", showlegend=False,
+        )
+    )
+    fig.update_layout(
+        height=380, margin=dict(t=10, b=10, l=10, r=10),
+        xaxis=dict(visible=False, range=[-3.0, 2.8]), yaxis=dict(visible=False, range=[-1.9, 2.5]),
+    )
+    return fig
 
 
 # Configuration de page gérée par le routeur Accueil.py.
 
 st.title("📚 Base de connaissances")
 st.caption(
-    "Comprendre la décision énergétique.  ·  "
-    "Technologie utilisée : ontologie OWL OntoHESS + règles expertes."
+    "L'ontologie OntoHESS formalise les connaissances expertes sur le système hybride de "
+    "stockage : ses composants, ses grandeurs, ses états et les règles qui les relient. "
+    "Cette page la présente ; la page « Pourquoi cette décision ? » l'applique à chaque "
+    "instant du cycle."
 )
 
+regles = ox.charger_regles()
+relations, attributs, individus = ox.vocabulaire_ontologie()
+hierarchie = ox.hierarchie_classes()
 
-# Données : résultats de référence précalculés (via le pont)
+if not regles or not individus:
+    st.warning("Ontologie non chargée (fichier ontologies/OntoHESS2.owl ou rdflib absent).")
+    st.stop()
 
+m1, m2, m3, m4, m5 = st.columns(5)
+m1.metric("Classes", len(ox.classes_ontologie()))
+m2.metric("Relations", len(relations))
+m3.metric("Attributs", len(attributs))
+m4.metric("Individus", len(individus))
+m5.metric("Règles SWRL", len(regles))
+
+
+# 1 — Les concepts
+
+st.subheader("1. Les concepts")
+st.caption("Les classes de l'ontologie, rangées sous leurs quatre grandes catégories.")
+colonnes = st.columns(len(hierarchie))
+for col, (racine, enfants) in zip(colonnes, hierarchie.items()):
+    with col:
+        with st.container(border=True):
+            st.markdown(f"**{RACINES_FR.get(racine, racine)}**  \n`{racine}`")
+            st.markdown(
+                "\n".join(
+                    f"- `{c}`" + (f" — {ox.CLASSES_FR[c]}" if c in ox.CLASSES_FR else "")
+                    for c in enfants
+                )
+            )
+
+
+# 2 — Le système décrit
+
+st.subheader("2. Le système décrit")
+st.caption(
+    "Les individus sont les objets concrets du HESS étudié, avec les valeurs que "
+    "l'ontologie leur attribue ; les relations disent comment les classes se relient."
+)
+lignes_ind = [
+    {
+        "Individu": nom,
+        "Classes": ", ".join(types),
+        "Propriétés": " ; ".join(f"{p} = {v}" for p, v in props),
+    }
+    for nom, types, props in ox.individus_ontologie()
+]
+st.dataframe(pd.DataFrame(lignes_ind).set_index("Individu"), width="stretch")
+
+# Cohérence entre l'ontologie et les paramètres de la simulation
+_props_eb = dict(next((p for nom, _, p in ox.individus_ontologie() if nom == "batteryE1"), []))
+_i_max_onto = _props_eb.get("iEB_max_value")
+_i_max_sim = core.P_EB_MAX_W / core.V_EB_PACK_NOM
+if _i_max_onto is not None and abs(float(_i_max_onto) - _i_max_sim) > 0.01 * _i_max_sim:
+    st.warning(
+        f"Écart entre l'ontologie et la simulation : `iEB_max_value` vaut {float(_i_max_onto):.2f} A "
+        f"dans l'ontologie, alors que la simulation limite l'EB à {_i_max_sim:.1f} A "
+        f"({core.P_EB_MAX_W / 1000:.1f} kW). Les deux sources doivent être alignées."
+    )
+
+with st.expander(f"Les {len(ox.relations_ontologie())} relations entre classes"):
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {"Relation": r, "De": ", ".join(d) or "—", "Vers": ", ".join(p) or "—"}
+                for r, d, p in ox.relations_ontologie()
+            ]
+        ).set_index("Relation"),
+        width="stretch",
+    )
+
+
+# 3 — Parcourir les règles
+
+st.subheader("3. Parcourir les règles")
+TYPES_FR = {
+    "mode": "Mode de fonctionnement",
+    "repartition": "Répartition de la puissance",
+    "courant": "Limitation de courant",
+    "calcul": "Calcul d'une grandeur",
+}
+SUJETS = {"eb": "batterie Énergie", "pb": "batterie Puissance", "l": "charge", "c": "convertisseur"}
+
+
+def _sujet(s):
+    return SUJETS.get(s, s)
+
+
+onglet_swrl, onglet_flou = st.tabs(
+    [f"Règles SWRL de l'ontologie ({len(regles)})", f"Règles floues du moteur ({len(ox.regles_floues())})"]
+)
+
+with onglet_swrl:
+    role = st.radio("Rôle", ["Toutes"] + list(TYPES_FR.values()), horizontal=True, key="role_regle")
+    choix = [r for r in regles if role == "Toutes" or TYPES_FR[ox.lire_regle(r)[0]] == role]
+    regle = st.selectbox(
+        "Règle", choix, format_func=lambda r: f"{r['id']} — {ox.lire_regle(r)[1]}", key="regle_swrl",
+    )
+    type_r, lecture = ox.lire_regle(regle)
+    evaluee = type_r in ("mode", "repartition")
+    with st.container(border=True):
+        st.markdown(f"#### {regle['id']} · {TYPES_FR[type_r]}")
+        st.markdown(f"**En clair** : {lecture}.")
+        f1, f2 = st.columns(2)
+        with f1:
+            st.markdown("**S'applique à**")
+            st.markdown(", ".join(ox.CLASSES_FR.get(c, c) for c in regle["classes"]) or "—")
+            st.markdown("**Grandeurs lues**")
+            st.markdown(
+                "\n".join(
+                    f"- `{args[-1]}` : {ox._fr(p)} ({_sujet(args[0])})"
+                    for p, args in regle["lectures"] if len(args) == 2
+                ) or "—"
+            )
+        with f2:
+            st.markdown("**Si**")
+            st.markdown("\n".join(f"- `{c}`" for c in ox.conditions_en_clair(regle)) or "- toujours (pas de condition)")
+            if regle["calculs"]:
+                st.markdown("**Calcule**")
+                st.markdown("\n".join(f"- `{c}`" for c in ox.calculs_en_clair(regle)))
+            st.markdown("**Alors**")
+            st.markdown(
+                "\n".join(
+                    f"- {ox._fr(p)} ({_sujet(args[0])}) = `{args[1]}`"
+                    for p, args in regle["affectations"] if len(args) == 2
+                ) or "—"
+            )
+        st.caption(
+            "Évaluée par l'application à chaque instant du cycle."
+            if evaluee
+            else "Non évaluée pendant la simulation : elle porte sur des grandeurs internes "
+            "(courants, tensions) que la simulation ne calcule pas, ou n'a pas de condition."
+        )
+
+    with st.expander(f"Vue d'ensemble des {len(regles)} règles"):
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Règle": r["id"],
+                        "Rôle": TYPES_FR[ox.lire_regle(r)[0]],
+                        "Si": " et ".join(ox.conditions_en_clair(r)) or "toujours",
+                        "Alors": ox.lire_regle(r)[1],
+                    }
+                    for r in regles
+                ]
+            ).set_index("Règle"),
+            width="stretch",
+            height=420,
+        )
+    with st.expander("Signification des variables"):
+        st.markdown("\n".join(f"- `{v}` : {s}" for v, s in ox.GLOSSAIRE_VARIABLES.items()))
+
+with onglet_flou:
+    st.caption(
+        "Ces règles sont définies dans le code du moteur flou, pas dans le fichier OWL ; "
+        "elles emploient les concepts de l'ontologie. Le moteur calcule alpha comme la "
+        "moyenne de leurs conclusions, pondérée par l'activation de chaque règle : la "
+        "contribution de chaque règle à la décision est donc exacte."
+    )
+    floues = ox.regles_floues()
+    rf = st.selectbox("Règle floue", floues, format_func=lambda r: r["libelle"], key="regle_floue")
+    with st.container(border=True):
+        st.markdown(f"#### {rf['libelle']}")
+        st.markdown(f"**Si** {rf['si']}")
+        st.markdown(f"**Alors** confier **{rf['alpha'] * 100:.0f} %** de la puissance à la PB, c'est-à-dire {rf['sens']}.")
+        if rf["concepts"]:
+            st.markdown(
+                "**Concepts de l'ontologie** : "
+                + ", ".join(f"{lib} (`{cl}`)" for lib, cl in rf["concepts"])
+            )
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {"Règle": r["libelle"], "Si": r["si"], "Part de la PB": f"{r['alpha'] * 100:.0f} %"}
+                for r in floues
+            ]
+        ).set_index("Règle"),
+        width="stretch",
+    )
+    with st.expander("Définition des termes flous"):
+        st.markdown("\n".join(f"- **{t}** : {d}" for t, d in ox.termes_flous()))
+        st.caption(
+            f"Sans aucune règle activée, le moteur applique une répartition par défaut de "
+            f"{core.FUZZY_DEFAULT_ALPHA * 100:.0f} % pour la PB."
+        )
+
+# Vérification : les règles de répartition décrivent-elles le modèle physique ?
 try:
     assurer_donnees_session(st)
-except FileNotFoundError as exc:
-    st.error(str(exc))
-    st.info("Lancez une fois le précalcul :  `python scripts/run_simulations.py`")
-    st.stop()
-
-resultats = st.session_state.get("resultats_simulation")
-df = st.session_state.get("cycle_pret")
-
-if not resultats or df is None:
-    st.warning("Aucune donnée disponible.")
-    st.stop()
-
-
-# Choix de l'instant et de la stratégie de référence
-
-n_points = min([len(df)] + [len(traj["P_EB"]) for traj in resultats.values()])
-
-col_t, col_s = st.columns([2, 1])
-
-instant, t_sel = choisir_instant(df, n_points, col_t)
-
-with col_s:
-    strategie = st.selectbox(
-        "Stratégie de référence",
-        list(resultats.keys()),
-        format_func=nom_affichage,
-    )
-
-traj = resultats[strategie]
-
-vitesse_ms = float(df["speed"].iloc[instant]) if "speed" in df.columns else None
-accel = float(df["hasAcceleration"].iloc[instant]) if "hasAcceleration" in df.columns else 0.0
-soc_eb = float(traj["SOC_EB"][instant])
-soc_pb = float(traj["SOC_PB"][instant])
-p_dem_cycle = float(df["hasPower"].iloc[instant])
-
-# Mode « What-if » : on peut remplacer manuellement la puissance demandée, tout
-# en gardant l'état réel de l'instant (SOC, vitesse, accélération...).
-utiliser_cycle = st.checkbox("Utiliser la puissance du cycle", value=True)
-if utiliser_cycle:
-    p_dem = p_dem_cycle
-else:
-    p_dem = (
-        st.number_input(
-            "Puissance demandée (kW)",
-            value=round(p_dem_cycle / 1000.0, 2),
-            step=1.0,
-            format="%.2f",
-        )
-        * 1000.0
-    )
-mode_whatif = not utiliser_cycle
-
-cap = analyser_capacites_hess(p_dem, soc_eb, soc_pb)
-
-if utiliser_cycle:
-    # Décision réellement prise par la stratégie choisie (précalculée).
-    p_eb = float(traj["P_EB"][instant])
-    p_pb = float(traj["P_PB"][instant])
-    correction = (
-        bool(traj["correction_applied"][instant])
-        if "correction_applied" in traj
-        else False
-    )
-else:
-    # What-if : la répartition précalculée ne correspond plus à cette puissance,
-    # on recalcule la décision réellement cohérente avec la puissance modifiée.
-    if strategie == "EMS_MLP":
-        # Vraie décision du modèle MLP, recalculée pour la puissance modifiée.
-        modele_mlp, scaler_mlp = _charger_mlp_pour_whatif()
-        vals_mlp = {
-            "SOC_EB": soc_eb,
-            "SOC_PB": soc_pb,
-            "hasPower": p_dem,
-            "speed": float(df["speed"].iloc[instant]) if "speed" in df.columns else 0.0,
-            "hasAcceleration": accel,
-        }
-        brut_mlp = np.array([vals_mlp[col] for col in MLP_INPUT_COLS], dtype=np.float64)
-        if scaler_mlp is not None:
-            brut_mlp = appliquer_scaler(brut_mlp, scaler_mlp)
-        x_mlp = torch.tensor([brut_mlp.tolist()], dtype=torch.float32, device=DEVICE)
-        with torch.no_grad():
-            alpha_req = float(modele_mlp(x_mlp).item())
-        source_decision_wi = "modèle MLP"
-    else:
-        # Autres stratégies : proposition des règles floues (interprétable).
-        alpha_req = float(
-            alpha_fuzzy_calc(
-                np.array([soc_eb]),
-                np.array([soc_pb]),
-                np.array([p_dem]),
-                np.array([accel]),
-            )["alpha"][0]
-        )
-        source_decision_wi = "règles floues"
-
-    decision_wi = resoudre_decision_physique(alpha_req, p_dem, soc_eb, soc_pb)
-    p_eb = float(decision_wi["P_EB_final"])
-    p_pb = float(decision_wi["P_PB_final"])
-    correction = bool(decision_wi["correction_applied"])
-
-# Même source d'état que les autres pages, avec la puissance EB de la décision.
-etats = ox.etat_instant(p_dem, soc_eb, soc_pb, p_eb=p_eb)["symboliques"]
-
-
-def kw(x):
-    return f"{x / 1000.0:.1f} kW"
-
-
-if p_dem > EPS_POWER_W:
-    regime = "Traction"
-elif p_dem < -EPS_POWER_W:
-    regime = "Freinage / récupération"
-else:
-    regime = "Arrêt / roue libre"
-
-
-# 1. Situation actuelle
-
-st.header("1. Situation actuelle")
-
-if mode_whatif:
-    st.warning(
-        f"**Mode d'analyse : What-if** — puissance modifiée manuellement "
-        f"(**{kw(p_dem)}** au lieu de {kw(p_dem_cycle)} du cycle). Les autres "
-        "variables (SOC, vitesse, accélération) restent celles de cet instant ; "
-        f"la décision est recalculée ({source_decision_wi} + filtre physique de sécurité)."
-    )
-else:
-    st.caption("Mode d'analyse : Référence — puissance issue du cycle.")
-
-s1, s2, s3, s4 = st.columns(4)
-s1.metric("Temps", f"{t_sel:.0f} s")
-s2.metric("Vitesse", f"{vitesse_ms * 3.6:.0f} km/h" if vitesse_ms is not None else "n/a")
-s3.metric(
-    "Puissance demandée",
-    kw(p_dem),
-    "modifiée" if mode_whatif else None,
-)
-s4.metric("Mode de fonctionnement", regime)
-
-
-# 2. État du HESS
-
-st.header("2. État des composants du HESS")
-
-etat_col1, etat_col2, etat_col3 = st.columns(3)
-
-with etat_col1:
-    with st.container(border=True):
-        st.markdown("**Batterie Énergie**")
-        st.markdown(f"SOC : **{soc_eb * 100:.0f} %**")
-        st.markdown(f"Puissance disponible : **{kw(cap['eb_dispo_max_W'])}**")
-        st.markdown(f"Puissance fournie : **{kw(p_eb)}**")
-        st.markdown(f"Puissance restante : **{kw(cap['eb_dispo_max_W'] - max(0.0, p_eb))}**")
-        etat = "Disponible" if cap["eb_dispo_max_W"] > 1.0 else "Indisponible"
-        if etats["EB_low_SOC"]:
-            etat += " (SOC au minimum)" if cap["eb_dispo_max_W"] <= 1.0 else " (presque vide)"
-        st.markdown(f"État : {etat}")
-
-with etat_col2:
-    with st.container(border=True):
-        st.markdown("**Batterie Puissance**")
-        st.markdown(f"SOC : **{soc_pb * 100:.0f} %**")
-        st.markdown(f"Puissance disponible : **{kw(cap['pb_dispo_max_W'])}**")
-        st.markdown(f"Puissance fournie : **{kw(p_pb)}**")
-        st.markdown(f"Puissance restante : **{kw(cap['pb_dispo_max_W'] - max(0.0, p_pb))}**")
-        etat = "Disponible" if cap["pb_dispo_max_W"] > 1.0 else "Indisponible"
-        if etats["PB_low_SOC"]:
-            etat += " (SOC au minimum)" if cap["pb_dispo_max_W"] <= 1.0 else " (presque vide)"
-        st.markdown(f"État : {etat}")
-
-with etat_col3:
-    with st.container(border=True):
-        st.markdown("**Convertisseur**")
-        conv = "Proche de sa limite" if etats["converter_risk"] else "Fonctionnement normal"
-        st.markdown(f"État : {conv}")
-        st.markdown("**Filtre de sécurité**")
-        st.markdown("Correction appliquée" if correction else "Aucune correction")
-
-
-# 3. Analyse des capacités
-
-st.header("3. Que peut réellement fournir chaque batterie ?")
-
-cap1, cap2, cap3 = st.columns(3)
-cap1.metric("Batterie Énergie — max", kw(cap["eb_dispo_max_W"]))
-cap2.metric("Batterie Puissance — max", kw(cap["pb_dispo_max_W"]))
-cap3.metric("HESS — total disponible", kw(cap["hess_dispo_max_W"]))
-
-if p_dem > EPS_POWER_W:
-    eb_seule = p_dem <= cap["eb_dispo_max_W"] + EPS_POWER_W
-    pb_seule = p_dem <= cap["pb_dispo_max_W"] + EPS_POWER_W
-
-    if eb_seule:
-        conclusion = "La batterie Énergie peut satisfaire **seule** la demande."
-    elif pb_seule and not eb_seule:
-        conclusion = (
-            "La batterie Énergie ne peut pas satisfaire seule la demande : "
-            "la batterie Puissance doit participer."
-        )
-    elif cap["faisable"]:
-        conclusion = (
-            "Aucune batterie ne suffit seule : les **deux ensemble** couvrent la "
-            f"demande ({kw(cap['hess_dispo_max_W'])} disponibles pour {kw(p_dem)})."
-        )
-    else:
-        conclusion = (
-            f"**Demande non réalisable** : puissance disponible insuffisante "
-            f"(manque de {kw(cap['P_non_servie_W'])})."
-        )
-
-    if cap["faisable"]:
-        st.success(f"Le système conclut : {conclusion}")
-    else:
-        st.error(f"Le système conclut : {conclusion}")
-        st.info(
-            "**Réaction du système** : aucune répartition ne permet de couvrir la "
-            "demande en respectant les limites physiques (SOC minimal des batteries, "
-            "convertisseur). Les batteries fournissent le maximum autorisé et "
-            f"**{kw(cap['P_non_servie_W'])} restent non servis**. Le filtre de sécurité "
-            "protège les batteries contre la décharge profonde, au détriment de la "
-            "performance : en pratique, la propulsion du véhicule serait limitée à cet "
-            "instant (le conducteur n'obtient pas toute la puissance demandée)."
-        )
-elif p_dem < -EPS_POWER_W:
+    _res = st.session_state.get("resultats_simulation") or {}
+    _df = st.session_state.get("cycle_pret")
+except FileNotFoundError:
+    _res, _df = {}, None
+if "EMS_power_limitation" in _res and _df is not None:
+    _t = _res["EMS_power_limitation"]
+    _n = min(len(_df), len(_t["alpha_requested"]))
+    _onto = ox.alpha_ontologie_vect(_df["hasPower"].to_numpy(dtype=float)[:_n], np.asarray(_t["SOC_EB"], float)[:_n])
+    _m = ~np.isnan(_onto)
+    _ecart = np.abs(np.asarray(_t["alpha_requested"], float)[:_n][_m] - _onto[_m])
+    _nb = f"{_m.sum():,}".replace(",", " ")
     st.info(
-        "Phase de freinage : l'énergie récupérée est absorbée par les batteries "
-        f"(non récupérée : {kw(cap['P_regen_rejetee_W'])})."
+        f"Les règles de répartition R13 à R17 décrivent exactement le {nom_affichage('EMS_power_limitation').lower()} : "
+        f"sur les {_nb} instants du cycle où elles s'appliquent, la répartition qu'elles "
+        f"prescrivent et celle demandée par cette stratégie diffèrent au plus de "
+        f"{_ecart.max() * 100:.2f} point."
     )
-else:
-    st.info("Demande quasi nulle : le véhicule est à l'arrêt ou en roue libre.")
 
 
-# 4. Raisonnement intelligent
+# 4 — Comment chaque stratégie utilise l'ontologie
 
-st.header("4. Raisonnement ontologique")
-
+st.subheader("4. Comment chaque stratégie utilise l'ontologie")
+USAGES = {
+    "EMS_power_limitation": "N'exécute pas l'ontologie, mais prend exactement la décision des règles de répartition R13 à R17.",
+    "EMS_fuzzy_logic": "Ses règles floues reposent sur les concepts `SOCState` et `PowerState` ; elles sont écrites dans le code, pas lues dans le fichier OWL.",
+    "EMS_MLP": "Aucun usage.",
+    "EMS_LSTM": "Aucun usage.",
+    "EMS_GNN": "Aucun usage direct ; son graphe reprend les composants du HESS (batteries, convertisseur, moteur, véhicule).",
+    "EMS_MLP_neurosymbolic": "Part de la base floue (concepts de l'ontologie) et reçoit des états symboliques (SOC, puissance, convertisseur).",
+    "EMS_LSTM_neurosymbolic": "Reçoit quatre états symboliques (forte demande, freinage, demande nulle, convertisseur chargé) en entrée.",
+}
+st.dataframe(
+    pd.DataFrame(
+        [{"Stratégie": nom_affichage(c), "Usage de l'ontologie": u} for c, u in USAGES.items()]
+    ).set_index("Stratégie"),
+    width="stretch",
+)
 st.caption(
-    "Les mesures deviennent des connaissances métier, qui déclenchent ensuite les "
-    "règles expertes. L'ontologie constitue donc le premier niveau d'explication."
-)
-
-_interp = ox.interpretation_ontologique(p_dem, soc_eb, soc_pb)
-
-st.subheader("Étape 1 — Les faits observés")
-for obs in _interp["observations"]:
-    st.markdown(f"- {obs['mesure']}  ·  `{obs['individu']} · {obs['propriete']}`")
-
-st.subheader("Étape 2 — Interprétation par l'ontologie OntoHESS")
-st.caption("Chaque mesure est rattachée à une propriété déclarée dans l'ontologie, puis comparée à ses seuils.")
-for ded in _interp["deductions"]:
-    with st.container(border=True):
-        marque = "✔️" if ded["present"] else "—"
-        st.markdown(f"{marque} **{ded['libelle']}**  ·  `{ded['concept']}`")
-        st.caption(f"Parce que {ded['justification']}.")
-
-st.subheader("Étape 3 — Connaissances déduites")
-_libelle_etat = ox.ETATS_ONTOLOGIE[_interp["etat"]]
-st.success(
-    f"État de fonctionnement inféré : **{_libelle_etat}** "
-    f"(individu `{_interp['etat']}` de l'ontologie)."
-)
-if _interp["relations"]:
-    st.markdown(
-        "Relations mobilisées : "
-        + ", ".join(f"`{r}`" for r in _interp["relations"])
-    )
-
-st.subheader("Étape 4 — Règles expertes activées")
-
-res_fuzzy = alpha_fuzzy_calc(
-    np.array([soc_eb]),
-    np.array([soc_pb]),
-    np.array([p_dem]),
-    np.array([accel]),
-)
-forces = np.asarray(res_fuzzy["strengths"][0], dtype=float)
-regle_dominante = str(res_fuzzy["dominant_rule"][0])
-
-regles_actives = sorted(
-    [
-        (FUZZY_RULE_NAMES[i], forces[i])
-        for i in range(len(FUZZY_RULE_NAMES))
-        if forces[i] > 0.05
-    ],
-    key=lambda x: x[1],
-    reverse=True,
-)
-
-if not regles_actives:
-    st.info(
-        "Aucune règle experte ne domine clairement : le système applique une "
-        "répartition prudente par défaut."
-    )
-else:
-    for nom_regle, force in regles_actives:
-        libelle = RULE_LABELS_FR.get(nom_regle, nom_regle)
-        principale = nom_regle == regle_dominante
-        with st.container(border=True):
-            st.markdown(
-                ("**Règle principale**" if principale else "**Règle secondaire**")
-                + f" — {libelle}."
-            )
-            st.progress(min(1.0, float(force)), text=f"Intensité : {force * 100:.0f} %")
-
-
-# 5. Décision finale
-
-st.header("5. Décision finale")
-
-if mode_whatif:
-    st.caption(
-        f"Mode What-if : répartition **recalculée** pour la puissance modifiée, "
-        f"à partir de la décision du **{source_decision_wi}**, puis passée au filtre "
-        "physique de sécurité."
-    )
-
-total_mag = abs(p_eb) + abs(p_pb)
-part_eb = 100.0 * abs(p_eb) / total_mag if total_mag > 1.0 else 0.0
-part_pb = 100.0 * abs(p_pb) / total_mag if total_mag > 1.0 else 0.0
-
-d1, d2 = st.columns(2)
-with d1:
-    st.metric("Batterie Énergie fournit", kw(p_eb), f"{part_eb:.0f} % de la répartition")
-with d2:
-    st.metric("Batterie Puissance fournit", kw(p_pb), f"{part_pb:.0f} % de la répartition")
-
-st.markdown(
-    f"La batterie Énergie fournit **{kw(p_eb)}** ({part_eb:.0f} %) et la batterie "
-    f"Puissance fournit **{kw(p_pb)}** ({part_pb:.0f} %). "
-    + (
-        "Le filtre de sécurité a **corrigé** la répartition proposée pour respecter "
-        "les limites physiques des batteries et du convertisseur."
-        if correction
-        else "La décision respectait déjà les contraintes physiques : aucune correction "
-        "n'a été nécessaire."
-    )
+    "Pour toutes les stratégies, l'ontologie sert aussi à expliquer : chaque décision est "
+    "relue avec ses règles dans la page « Pourquoi cette décision ? »."
 )
 
 
-# 6. Détails techniques (optionnels) — pour experts
+# 5 — Tester les règles sur une situation choisie
 
-st.divider()
-
-st.subheader("Connaissances utilisées")
+st.subheader("5. Tester les règles")
 st.caption(
-    "Ce que cette décision a réellement mobilisé dans l'ontologie OntoHESS — "
-    "et non un simple comptage du fichier."
+    "Choisissez une situation : l'ontologie en déduit l'état de fonctionnement et la "
+    "répartition de référence, règle par règle."
 )
+s1, s2, s3 = st.columns(3)
+p_test = s1.slider("Puissance demandée (kW)", -50.0, 50.0, 15.0, 0.5) * 1000.0
+soc_eb_test = s2.slider("SOC de la batterie Énergie (%)", 0, 100, 60) / 100.0
+soc_pb_test = s3.slider("SOC de la batterie Puissance (%)", 0, 100, 80) / 100.0
 
-_relations_owl, _attributs_owl, _individus_owl = ox.vocabulaire_ontologie()
+etat_test = ox.etat_fonctionnement(p_test)
+activees, non_activees, _ = ox.evaluer_regles(p_test, soc_eb_test, soc_pb_test)
+repart = ox.repartition_ontologie(p_test, soc_eb_test, soc_pb_test)
 
-if not _individus_owl:
-    st.info("Ontologie non chargée — la logique de décision reste opérationnelle.")
-else:
-    con1, con2, con3 = st.columns(3)
-    with con1:
-        st.markdown("**Composants mobilisés**")
-        for individu in _interp["individus"]:
-            st.markdown(f"- `{individu}`")
-    with con2:
-        st.markdown("**Relations mobilisées**")
-        for relation in _interp["relations"]:
-            st.markdown(f"- `{relation}`")
-    with con3:
-        st.markdown("**Attributs mobilisés**")
-        for attribut in _interp["attributs"]:
-            st.markdown(f"- `{attribut}`")
-
-    st.markdown("**Concepts inférés à cet instant**")
-    for ded in _interp["deductions"]:
-        st.markdown(f"- `{ded['concept']}` — {ded['libelle']}")
-
-    with st.expander("Statistiques du fichier OWL"):
-        s1, s2, s3 = st.columns(3)
-        s1.metric("Classes OWL", len(ox.classes_ontologie()))
-        s2.metric("Relations", len(_relations_owl))
-        s3.metric("Attributs", len(_attributs_owl))
-        st.caption(
-            f"{len(ox.charger_regles())} règles SWRL et {len(_individus_owl)} individus "
-            "déclarés dans OntoHESS2.owl."
+g_col, t_col = st.columns([1, 1])
+with g_col:
+    st.plotly_chart(_graphe_connaissances(etat_test), width="stretch")
+with t_col:
+    st.markdown(f"État inféré : **{ox.ETATS_ONTOLOGIE[etat_test]}** (`{etat_test}`)")
+    for r in sorted((r for r in activees if r["type"] in ("mode", "repartition")), key=lambda r: r["type"]):
+        premisses = " et ".join(f"`{d['texte']}`" for d in r["details"])
+        st.markdown(f"- **{r['id']}** — si {premisses}, alors {r['lecture']}.")
+    if repart is not None:
+        a = repart["alpha"]
+        st.success(
+            f"Répartition de référence (règle {repart['regle']['id']}) : batterie Énergie "
+            f"{p_test * (1 - a) / 1000:.1f} kW, batterie Puissance {p_test * a / 1000:.1f} kW "
+            f"(alpha = {a * 100:.0f} %)."
         )
+    else:
+        st.info("Demande quasi nulle : aucune règle de répartition ne s'applique.")
 
-with st.expander(f"Détails techniques : les {len(FUZZY_RULE_NAMES)} règles expertes"):
-    for nom_regle in FUZZY_RULE_NAMES:
-        st.markdown(f"- **{nom_regle}** : {RULE_LABELS_FR.get(nom_regle, '')}")
+with st.expander("Règles non activées, et pourquoi"):
+    for r in non_activees:
+        if r["type"] not in ("mode", "repartition"):
+            continue
+        echecs = [d["texte"] for d in r["details"] if d["ok"] is False]
+        st.markdown(f"- **{r['id']}** ({r['lecture']}) : `{' ; '.join(echecs)}` non vérifié")
 
 
 pied_navigation("vues/3_Ontologie_OntoHESS.py")

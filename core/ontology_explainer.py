@@ -123,7 +123,12 @@ def charger_regles():
         if type_atome == "ClassAtom":
             return ("classe", str(graphe.value(atome, SWRL.classPredicate)).split("#")[-1])
         if type_atome in ("DatavaluedPropertyAtom", "IndividualPropertyAtom"):
-            return ("propriete", str(graphe.value(atome, SWRL.propertyPredicate)).split("#")[-1])
+            arguments = [
+                str(graphe.value(atome, a)).split("#")[-1]
+                for a in (SWRL.argument1, SWRL.argument2)
+                if graphe.value(atome, a) is not None
+            ]
+            return ("propriete", str(graphe.value(atome, SWRL.propertyPredicate)).split("#")[-1], arguments)
         if type_atome == "BuiltinAtom":
             arguments = [str(a).split("#")[-1] for a in suite(graphe.value(atome, SWRL.arguments))]
             return ("builtin", str(graphe.value(atome, SWRL.builtin)).split("#")[-1], arguments)
@@ -139,6 +144,10 @@ def charger_regles():
                 "conditions": [a for a in corps if a[0] == "builtin" and a[1] in COMPARATEURS],
                 "calculs": [a for a in corps if a[0] == "builtin" and a[1] in CALCULS],
                 "conclusions": [a[1] for a in tete if a[0] == "propriete"],
+                # Détail complet, pour parcourir les règles : grandeurs lues dans
+                # le corps et affectations de la tête, avec leurs arguments.
+                "lectures": [(a[1], a[2]) for a in corps if a[0] == "propriete"],
+                "affectations": [(a[1], a[2]) for a in tete if a[0] == "propriete"],
             }
         )
 
@@ -468,6 +477,267 @@ def _format_valeur(nom_variable, valeur):
     return f"{valeur:.2f}"
 
 
+# Lecture en clair des règles SWRL de mode de fonctionnement et de répartition.
+# Elles sont identifiées par leurs conditions, pas par leur numéro : le numéro
+# dépend de l'ordre de lecture du fichier, les conditions non.
+def _cle_conditions(conditions):
+    return frozenset((op, tuple(args)) for _, op, args in conditions)
+
+
+LECTURE_REGLES = {
+    frozenset({("greaterThan", ("P", "0")), ("lessThanOrEqual", ("P", "pmax"))}):
+        ("mode", "la traction reste dans les limites de la batterie Énergie"),
+    frozenset({("greaterThan", ("P", "pmax"))}):
+        ("mode", "la traction dépasse la limite de la batterie Énergie : la PB doit assister"),
+    frozenset({("lessThanOrEqual", ("soc", "smin"))}):
+        ("mode", "la batterie Énergie est à son SOC minimal : elle doit être protégée"),
+    frozenset({("lessThan", ("P", "0"))}):
+        ("mode", "le véhicule freine : de l'énergie est récupérée"),
+    frozenset({("lessThanOrEqual", ("soc", "smin")), ("greaterThan", ("P", "0"))}):
+        ("repartition", "la PB fournit toute la puissance, l'EB est protégée"),
+    frozenset({("greaterThan", ("soc", "smin")), ("greaterThan", ("P", "pmax"))}):
+        ("repartition", "l'EB fournit sa puissance maximale, la PB complète"),
+    frozenset({("lessThan", ("P", "pmin"))}):
+        ("repartition", "l'EB absorbe jusqu'à sa limite, la PB absorbe le surplus"),
+    frozenset({("greaterThan", ("soc", "smin")), ("greaterThan", ("P", "0")), ("lessThanOrEqual", ("P", "pmax"))}):
+        ("repartition", "l'EB fournit toute la puissance, la PB reste au repos"),
+    frozenset({("lessThan", ("P", "0")), ("greaterThanOrEqual", ("P", "pmin"))}):
+        ("repartition", "l'EB absorbe toute l'énergie récupérée"),
+}
+
+# Règles floues : libellé court, et concepts de l'ontologie qu'elles mobilisent
+# (classes d'OntoHESS entre parenthèses).
+REGLES_FLOUES = {
+    "R1_PB_low_traction": ("R1 · PB basse en traction", [("SOC de la PB bas", "SOCState"), ("traction", "PowerState")]),
+    "R2_EB_low_PB_available": ("R2 · EB basse, PB disponible", [("SOC de l'EB bas", "SOCState"), ("PB disponible", "SOCState")]),
+    "R3_strong_traction": ("R3 · forte traction", [("forte demande de traction", "PowerState")]),
+    "R4_zero_demand": ("R4 · demande nulle", [("demande quasi nulle", "PowerState")]),
+    "R5_regenerative_braking": ("R5 · freinage", [("freinage régénératif", "PowerState")]),
+    "R5b_PB_high_recharge": ("R5b · PB pleine en recharge", [("SOC de la PB élevé", "SOCState"), ("récupération", "PowerState")]),
+    "R7_two_low_SOC": ("R7 · deux SOC bas", [("SOC des deux batteries bas", "SOCState")]),
+}
+
+def calculs_en_clair(regle):
+    """Calculs d'une règle (builtins SWRL) : « z = x − y »."""
+    sortie = []
+    for _, op, args in regle["calculs"]:
+        if len(args) >= 3:
+            sortie.append(f"{args[0]} = {f' {CALCULS[op]} '.join(args[1:])}")
+    return sortie
+
+
+def regles_floues():
+    """Les sept règles floues du moteur (ems_core), décrites à partir de ses
+    constantes : conditions, conclusion (part de la PB), sens et concepts de
+    l'ontologie mobilisés. Le moteur calcule alpha comme la moyenne des
+    conclusions pondérée par l'activation de chaque règle."""
+    conditions = {
+        "R1_PB_low_traction": "SOC de la PB bas ET traction",
+        "R2_EB_low_PB_available": "SOC de l'EB bas ET PB disponible (SOC moyen ou haut) ET traction",
+        "R3_strong_traction": "forte traction ET PB disponible (SOC moyen ou haut)",
+        "R4_zero_demand": "demande nulle ET accélération stable",
+        "R5_regenerative_braking": "récupération ET PB rechargeable (SOC bas ou moyen)",
+        "R5b_PB_high_recharge": "récupération ET SOC de la PB haut",
+        "R7_two_low_SOC": "SOC de l'EB bas ET SOC de la PB bas",
+    }
+    return [
+        {
+            "cle": cle,
+            "libelle": REGLES_FLOUES.get(cle, (cle, []))[0],
+            "si": conditions.get(cle, "—"),
+            "alpha": float(core.FUZZY_RULE_CONSEQUENTS[i]),
+            "sens": core.RULE_LABELS_FR.get(cle, ""),
+            "concepts": REGLES_FLOUES.get(cle, (cle, []))[1],
+        }
+        for i, cle in enumerate(core.FUZZY_RULE_NAMES)
+    ]
+
+
+def termes_flous():
+    """Définition chiffrée des termes employés par les règles floues."""
+    kw = lambda w: f"{w / 1000:.1f} kW"  # noqa: E731
+    return [
+        ("SOC de l'EB bas", f"plein en dessous de {core.SOC_LOW_FULL_EB * 100:.0f} %, nul au-dessus de {core.SOC_LOW_THRESHOLD * 100:.0f} %"),
+        ("SOC de la PB bas", f"plein en dessous de {core.SOC_LOW_FULL_PB * 100:.0f} %, nul au-dessus de {core.SOC_LOW_THRESHOLD * 100:.0f} %"),
+        ("SOC moyen", "trapèze 25 – 35 – 65 – 75 %"),
+        ("SOC haut", "nul en dessous de 70 %, plein au-dessus de 80 %"),
+        ("Traction", f"de {core.EPS_POWER_W:.0f} W jusqu'à la limite de l'EB ({kw(core.P_EB_MAX_W)}) et au-delà"),
+        ("Forte traction", f"nulle en dessous de {kw(0.6 * core.P_EB_MAX_W)}, pleine au-delà de {kw(core.P_EB_MAX_W)}"),
+        ("Demande nulle", f"|P| ≤ {core.EPS_POWER_W:.0f} W (s'annule à {2 * core.EPS_POWER_W:.0f} W)"),
+        ("Récupération", f"puissance négative ; forte en dessous de {kw(core.P_EB_MIN_W)}"),
+        ("Accélération stable", "|a| ≤ 0,1 m/s² (s'annule à 0,4 m/s²)"),
+    ]
+
+
+def contributions_floues(forces):
+    """Contribution exacte de chaque règle floue à alpha : wᵢ·cᵢ / Σw.
+    Leur somme vaut la sortie floue ; None si aucune règle n'est activée
+    (le moteur applique alors sa répartition par défaut)."""
+    import numpy as np
+
+    forces = np.asarray(forces, dtype=float)
+    somme = forces.sum()
+    if somme <= 1e-9:
+        return None
+    return forces * core.FUZZY_RULE_CONSEQUENTS / somme
+
+
+# Variables des règles SWRL, en clair.
+GLOSSAIRE_VARIABLES = {
+    "P": "puissance demandée",
+    "pmax": "puissance maximale de décharge de l'EB",
+    "pmin": "puissance maximale de recharge de l'EB",
+    "soc": "SOC de l'EB",
+    "smin": "SOC minimal de l'EB",
+    "imax": "courant maximal de l'EB",
+    "imin": "courant minimal de l'EB",
+    "ibp_nom": "courant nominal de la PB",
+    "ibe_nom2": "courant nominal de l'EB",
+    "icharge": "courant de charge",
+    "veb": "tension de l'EB",
+    "vpb": "tension de la PB",
+    "ieb": "courant de l'EB",
+}
+
+
+def lire_regle(regle):
+    """(type, lecture) d'une règle : « mode », « repartition » ou « calcul »."""
+    if not regle["conditions"]:
+        return "calcul", "calcule une grandeur (" + ", ".join(dict.fromkeys(_fr(c) for c in regle["conclusions"])) + ")"
+    cle = _cle_conditions(regle["conditions"])
+    if cle in LECTURE_REGLES:
+        return LECTURE_REGLES[cle]
+    return "courant", "fixe le courant d'une batterie selon ses limites"
+
+
+def conditions_en_clair(regle):
+    """Conditions d'une règle, écrites avec les noms des variables."""
+    return [
+        f"{args[0]} {COMPARATEURS[op]} {args[1]}"
+        for _, op, args in regle["conditions"]
+        if len(args) >= 2
+    ]
+
+
+def alpha_ontologie_vect(p_dem, soc_eb):
+    """Répartition (part de la PB) prescrite par les règles de répartition
+    d'OntoHESS, pour des tableaux de puissance et de SOC. Mêmes conditions que
+    les règles lues dans le fichier OWL (seuils pEB_max, pEB_min, socEB_min).
+    NaN si la demande est quasi nulle : aucune règle de répartition ne s'applique."""
+    import numpy as np
+
+    p = np.asarray(p_dem, dtype=float)
+    soc = np.asarray(soc_eb, dtype=float)
+    pmax, pmin, smin = core.P_EB_MAX_W, core.P_EB_MIN_W, core.SOC_EB_MIN
+    alpha = np.full(p.shape, np.nan)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        traction = p > core.EPS_POWER_W
+        alpha[traction & (soc <= smin)] = 1.0
+        alpha[traction & (soc > smin) & (p <= pmax)] = 0.0
+        haut = traction & (soc > smin) & (p > pmax)
+        alpha[haut] = (p[haut] - pmax) / p[haut]
+        recup = p < -core.EPS_POWER_W
+        alpha[recup & (p >= pmin)] = 0.0
+        fort = recup & (p < pmin)
+        alpha[fort] = (p[fort] - pmin) / p[fort]
+    return alpha
+
+
+def repartition_ontologie(p_dem, soc_eb, soc_pb):
+    """Règle de répartition d'OntoHESS activée à cet instant et la part de la
+    PB qu'elle prescrit. None si aucune règle de répartition ne s'applique."""
+    activees, _, _ = evaluer_regles(p_dem, soc_eb, soc_pb)
+    regle = next((r for r in activees if r["type"] == "repartition"), None)
+    if regle is None or abs(p_dem) <= core.EPS_POWER_W:
+        return None
+    return {
+        "regle": regle,
+        "alpha": float(alpha_ontologie_vect([p_dem], [soc_eb])[0]),
+    }
+
+
+def hierarchie_classes():
+    """{classe racine: [sous-classes]} des classes nommées de l'ontologie."""
+    graphe = _graphe()
+    if graphe is None:
+        return {}
+    from rdflib import OWL, RDF, RDFS
+
+    classes = {str(c).split("#")[-1] for c in graphe.subjects(RDF.type, OWL.Class)}
+    parents = {}
+    for c in graphe.subjects(RDF.type, OWL.Class):
+        nom = str(c).split("#")[-1]
+        parents[nom] = [
+            str(p).split("#")[-1] for p in graphe.objects(c, RDFS.subClassOf)
+            if str(p).split("#")[-1] in classes
+        ]
+    racines = sorted(c for c, ps in parents.items() if not ps)
+    arbre = {r: [] for r in racines}
+    for c, ps in sorted(parents.items()):
+        for r in racines:
+            if r in ps:
+                arbre[r].append(c)
+    return arbre
+
+
+def relations_ontologie():
+    """[(relation, domaines, portées)] avec les seules classes nommées."""
+    graphe = _graphe()
+    if graphe is None:
+        return []
+    from rdflib import OWL, RDF, RDFS
+
+    classes = {str(c).split("#")[-1] for c in graphe.subjects(RDF.type, OWL.Class)}
+
+    def nommees(noeuds):
+        return sorted({str(n).split("#")[-1] for n in noeuds} & classes)
+
+    return sorted(
+        (
+            str(p).split("#")[-1],
+            nommees(graphe.objects(p, RDFS.domain)),
+            nommees(graphe.objects(p, RDFS.range)),
+        )
+        for p in graphe.subjects(RDF.type, OWL.ObjectProperty)
+    )
+
+
+def individus_ontologie():
+    """[(individu, classes nommées, [(propriété, valeur)])]."""
+    graphe = _graphe()
+    if graphe is None:
+        return []
+    from rdflib import OWL, RDF, Literal
+
+    classes = {str(c).split("#")[-1] for c in graphe.subjects(RDF.type, OWL.Class)}
+    sortie = []
+    for i in graphe.subjects(RDF.type, OWL.NamedIndividual):
+        types = sorted({str(t).split("#")[-1] for t in graphe.objects(i, RDF.type)} & classes)
+        props = [
+            (str(p).split("#")[-1], o.toPython() if isinstance(o, Literal) else str(o).split("#")[-1])
+            for p, o in graphe.predicate_objects(i)
+            if p != RDF.type
+        ]
+        sortie.append((str(i).split("#")[-1], types, sorted(props, key=lambda kv: kv[0])))
+    return sorted(sortie)
+
+
+@lru_cache(maxsize=1)
+def _graphe():
+    try:
+        from rdflib import Graph
+    except ImportError:
+        return None
+    if not CHEMIN_OWL.exists():
+        return None
+    graphe = Graph()
+    try:
+        graphe.parse(str(CHEMIN_OWL))
+    except Exception:  # noqa: BLE001
+        return None
+    return graphe
+
+
 def evaluer_regles(p_dem, soc_eb, soc_pb):
     """Évalue chaque règle de l'ontologie avec les valeurs de l'instant.
 
@@ -511,8 +781,11 @@ def evaluer_regles(p_dem, soc_eb, soc_pb):
                 }
             )
 
+        type_regle, lecture = lire_regle(regle)
         entree = {
             "id": regle["id"],
+            "type": type_regle,
+            "lecture": lecture,
             "classes": [CLASSES_FR.get(c, c) for c in regle["classes"]],
             # Une règle qui conclut sur les deux batteries répète la même propriété.
             "conclusions": list(dict.fromkeys(_fr(c) for c in regle["conclusions"])),

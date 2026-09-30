@@ -47,11 +47,10 @@ menu = {
     ],
     "📊 Résultats": [
         st.Page("vues/5_Comparaison_des_strategies.py", title="⚖️ Comparer les méthodes"),
-        st.Page("vues/4_Moteur_Neurosymbolique.py", title="📊 Analyse instantanée"),
         st.Page("vues/6_Resultats_et_Analyse.py", title="📈 Explorer les résultats"),
-        st.Page("vues/7_Explicabilite.py", title="💡 Pourquoi cette décision ?"),
     ],
-    "🧠 Intelligence artificielle": [
+    "💡 Comprendre les décisions": [
+        st.Page("vues/7_Explicabilite.py", title="💡 Pourquoi cette décision ?"),
         st.Page("vues/9_Architecture_des_modeles.py", title="🧠 Les modèles d'IA"),
         st.Page("vues/3_Ontologie_OntoHESS.py", title="📚 Base de connaissances"),
     ],
