@@ -146,12 +146,39 @@ def calculer_metriques(donnees: dict) -> dict:
         else None
     )
 
+    # Distance du cycle, pour ramener l'énergie consommée au kilomètre (M1).
+    distance_km = (
+        float(np.nansum(cycle_df["speed"].to_numpy(dtype=float))) * core.DT_SECONDS / 1000.0
+        if cycle_df is not None and "speed" in cycle_df.columns
+        else float("nan")
+    )
+    i_eb_lim = (core.P_EB_MIN_W / core.V_EB_PACK_NOM, core.P_EB_MAX_W / core.V_EB_PACK_NOM)
+    i_pb_lim = (core.P_PB_MIN_W / core.V_PB_PACK_NOM, core.P_PB_MAX_W / core.V_PB_PACK_NOM)
+
     metriques = {}
     for nom, traj in resultats.items():
         soc_eb = np.asarray(traj["SOC_EB"], dtype=float)
         soc_pb = np.asarray(traj["SOC_PB"], dtype=float)
         m = min(len(soc_eb), len(soc_pb))
         desequilibre = np.abs(soc_eb[:m] - soc_pb[:m])
+        pertes = bilan_pertes(traj)
+        p_hess = np.asarray(traj["P_EB"], dtype=float) + np.asarray(traj["P_PB"], dtype=float)
+        e_traction = float(np.sum(np.clip(p_hess, 0.0, None))) * core.DT_SECONDS / 3600.0
+        e_cons = _somme_wh(p_hess) + pertes["total_wh"]
+        i_eb = np.asarray(traj["I_EB"], dtype=float)
+        i_pb = np.asarray(traj["I_PB"], dtype=float)
+        tol = 1e-6
+        viol_courant = int(np.sum(
+            (i_eb < i_eb_lim[0] - tol) | (i_eb > i_eb_lim[1] + tol)
+            | (i_pb < i_pb_lim[0] - tol) | (i_pb > i_pb_lim[1] + tol)
+        ))
+        # Suivi de puissance (M6) : écart entre puissance fournie et demandée en
+        # traction, c'est-à-dire la demande non servie à chaque instant.
+        if p_dem is not None:
+            n_p = min(len(p_dem), len(p_hess))
+            ecart_p = np.where(p_dem[:n_p] > core.EPS_POWER_W, p_hess[:n_p] - p_dem[:n_p], 0.0)
+        else:
+            ecart_p = -np.asarray(traj["P_unserved"], dtype=float)
 
         infos = {
             "cout_etendu_moyen": float(np.nanmean(np.asarray(traj["cost"], dtype=float))),
@@ -163,7 +190,21 @@ def calculer_metriques(donnees: dict) -> dict:
             "desequilibre_soc_moyen": float(np.nanmean(desequilibre)),
             "energie_non_servie_wh": _somme_wh(traj["P_unserved"]),
             "regen_rejetee_wh": _somme_wh(traj["P_regen_curtailed"]),
-            "pertes_totales_wh": bilan_pertes(traj)["total_wh"],
+            "pertes_totales_wh": pertes["total_wh"],
+            # Protocole M1 à M7 (voir core/verdict.py).
+            "energie_consommee_wh": e_cons,
+            "energie_km_wh": e_cons / distance_km if distance_km > 0 else float("nan"),
+            "rendement_hess": e_traction / (e_traction + pertes["total_wh"]) if e_traction > 0 else float("nan"),
+            "rmse_delta_soc": float(np.sqrt(np.nanmean((soc_eb[:m] - soc_pb[:m]) ** 2))),
+            "delta_soc_max": float(np.nanmax(desequilibre)),
+            "delta_soc_final": float(desequilibre[-1]),
+            "pertes_convertisseur_wh": pertes["convertisseur_wh"],
+            "nb_violations_courant": viol_courant,
+            "rmse_puissance_kw": float(np.sqrt(np.mean(ecart_p ** 2))) / 1000.0,
+            "ecart_puissance_max_kw": float(np.max(np.abs(ecart_p))) / 1000.0 if len(ecart_p) else 0.0,
+            # Courants efficaces : indicateurs de vieillissement des deux batteries (M7).
+            "i_eb_rms": float(np.sqrt(np.nanmean(i_eb ** 2))),
+            "i_pb_rms": float(np.sqrt(np.nanmean(i_pb ** 2))),
         }
 
         # Vrai coût physique (si le cycle est disponible dans le fichier).
