@@ -74,19 +74,23 @@ INDICATEURS = [
 ]
  
 ECHELLE = {"soc_eb_final": 100.0, "soc_pb_final": 100.0, "i_pb_rms": 1.0, "nb_violations": 1.0}
- 
- 
+UNITE_ECART = {"soc_eb_final": " pts", "soc_pb_final": " pts", "i_pb_rms": " A", "nb_violations": ""}
+
+
 # 1 — Choix de la stratégie et de la référence
- 
+
 col_s, col_r = st.columns(2)
- 
+
+# Par défaut : une stratégie comparée au modèle physique, et non l'inverse.
+defaut_ref = next((n for n in noms if "power_limitation" in n), noms[0])
+defaut_cible = next((n for n in noms if n != defaut_ref), noms[0])
 cible = col_s.selectbox(
     "Stratégie à explorer",
     noms,
+    index=noms.index(defaut_cible),
     format_func=nom_affichage,
 )
- 
-defaut_ref = next((n for n in noms if "power_limitation" in n), noms[0])
+
 autres = [n for n in noms if n != cible]
 ref = col_r.selectbox(
     "Comparer à",
@@ -97,7 +101,21 @@ ref = col_r.selectbox(
  
 st.caption(f"Source des données : {source}")
 st.divider()
- 
+
+
+# Rôles visuels, communs à tous les graphiques de la page : la stratégie
+# explorée est pleine, la référence est évidée ou en tirets. Les couleurs
+# seules ne suffisent pas (le gris du modèle physique se confond avec le neutre).
+
+def _libelle(n):
+    return f"{nom_affichage(n)} ({'explorée' if n == cible else 'référence'})"
+
+
+def _trait(n):
+    if n == cible:
+        return dict(color=couleur(n), width=2.4)
+    return dict(color=couleur(n), width=1.8, dash="dash")
+
  
 # 2 — Écarts chiffrés, pas d'étoiles
  
@@ -108,53 +126,65 @@ for col, (lib, cle, sens, f, unite) in zip(cols, INDICATEURS):
     v_c = _valeur(cible, cle) * ECHELLE[cle]
     v_r = _valeur(ref, cle) * ECHELLE[cle]
     ecart = v_c - v_r
+    # Égalité jugée à l'arrondi affiché, pour ne jamais montrer « -0 ».
+    egal = f.format(abs(ecart)) == f.format(0.0)
     col.metric(
         lib,
         f.format(v_c) + f" {unite}",
-        delta=("—" if abs(ecart) < 1e-9 else f.format(ecart)),
+        delta=(None if egal else f.format(ecart) + UNITE_ECART[cle]),
         delta_color=("normal" if sens == "max" else "inverse"),
     )
-st.caption(f"Écart calculé face à {nom_affichage(ref)}. Vert = avantage pour la stratégie explorée.")
- 
- 
-# 3 — Position relative : l'écart, pas le rang
- 
-st.subheader("Position parmi les sept stratégies")
 st.caption(
-    "Chaque ligne place les sept stratégies entre la pire (0) et la meilleure (1) valeur "
+    f"Écart calculé face à {nom_affichage(ref)}. Vert = avantage pour la stratégie explorée ; "
+    "pas d'écart affiché = valeurs identiques."
+)
+
+
+# 3 — Position relative : l'écart, pas le rang
+
+nb = len(noms)
+st.subheader(f"Position parmi les {nb} stratégies")
+st.caption(
+    f"Chaque ligne place les {nb} stratégies entre la pire (0) et la meilleure (1) valeur "
     "observée sur ce cycle. Des points serrés signifient que le critère ne départage pas."
 )
- 
+
 fig_pos = go.Figure()
-for lib, cle, sens, f, unite in INDICATEURS:
+for i, (lib, cle, sens, f, unite) in enumerate(INDICATEURS):
     vals = {n: _valeur(n, cle) for n in noms}
     lo, hi = min(vals.values()), max(vals.values())
-    for n in noms:
+    # Les autres d'abord, la paire comparée ensuite : elle reste au premier plan.
+    for n in sorted(noms, key=lambda n: (n == cible, n == ref)):
         x = 0.5 if hi - lo < 1e-12 else (vals[n] - lo) / (hi - lo)
         if sens == "min":
             x = 1.0 - x
+        if n == cible:
+            marker = dict(size=16, color=couleur(n), line=dict(width=1.5, color="#FFFFFF"))
+        elif n == ref:
+            marker = dict(size=18, symbol="circle-open", color=couleur(n),
+                          line=dict(width=3, color=couleur(n)))
+        else:
+            marker = dict(size=8, color=COULEUR_NEUTRE, opacity=0.35)
         vedette = n in (cible, ref)
         fig_pos.add_trace(
             go.Scatter(
                 x=[x],
                 y=[lib],
                 mode="markers",
-                marker=dict(
-                    size=16 if vedette else 9,
-                    color=couleur(n) if vedette else COULEUR_NEUTRE,
-                    opacity=1.0 if vedette else 0.45,
-                    line=dict(width=1.5 if vedette else 0, color="#FFFFFF"),
-                ),
+                marker=marker,
+                name=_libelle(n) if vedette else nom_affichage(n),
+                legendgroup=n,
+                showlegend=vedette and i == 0,
                 hovertemplate=f"{nom_affichage(n)}<br>{f.format(vals[n] * ECHELLE[cle])} {unite}<extra></extra>",
-                showlegend=False,
             )
         )
- 
+
 fig_pos.update_layout(
-    height=90 * len(INDICATEURS) + 60,
-    margin=dict(t=20, b=40, l=10, r=20),
-    xaxis=dict(title="0 = pire des sept   ·   1 = meilleure des sept", range=[-0.06, 1.06]),
+    height=90 * len(INDICATEURS) + 90,
+    margin=dict(t=40, b=40, l=10, r=20),
+    xaxis=dict(title=f"0 = pire des {nb}   ·   1 = meilleure des {nb}", range=[-0.06, 1.06]),
     yaxis=dict(title=None, autorange="reversed"),
+    legend=dict(orientation="h", y=1.02, yanchor="bottom", x=0),
 )
 st.plotly_chart(fig_pos, width="stretch")
  
@@ -177,12 +207,8 @@ def _trajectoire(cle_soc, titre):
                 x=np.arange(len(y))[::pas],
                 y=y[::pas],
                 mode="lines",
-                name=nom_affichage(n),
-                line=dict(
-                    color=couleur(n),
-                    width=1.4 if n == ref else 2.2,
-                    dash="dot" if n == ref else "solid",
-                ),
+                name=_libelle(n),
+                line=_trait(n),
             )
         )
     fig.update_layout(
@@ -218,25 +244,34 @@ else:
  
 st.subheader("Sollicitation de la batterie Puissance")
 st.caption(
-    "Le courant efficace est l'indicateur lié au vieillissement électrochimique : "
-    "une distribution resserrée traduit un fonctionnement plus doux."
+    "Monotone du courant : les valeurs du courant PB (charge et décharge confondues), "
+    "triées de la plus forte à la plus faible. Plus la courbe est basse, plus la batterie "
+    "est ménagée ; le courant efficace, lié au vieillissement électrochimique, se joue "
+    "surtout dans la partie gauche."
 )
- 
+
+# Une boîte à moustaches ne convient pas ici : le courant est quasi nul la moitié
+# du temps, les boîtes s'écrasent sur 0 et seules les moustaches restent visibles.
 fig_i = go.Figure()
-for n in noms:
-    vedette = n in (cible, ref)
+for n in (ref, cible):
+    i_abs = np.sort(np.abs(np.asarray(resultats[n]["I_PB"], dtype=float)))[::-1]
+    part = np.arange(len(i_abs)) / len(i_abs) * 100.0
+    pas = max(1, len(i_abs) // 2000)
     fig_i.add_trace(
-        go.Box(
-            y=np.asarray(resultats[n]["I_PB"], dtype=float),
-            name=nom_affichage(n),
-            boxpoints=False,
-            marker_color=couleur(n) if vedette else COULEUR_NEUTRE,
-            opacity=1.0 if vedette else 0.35,
+        go.Scatter(
+            x=part[::pas],
+            y=i_abs[::pas],
+            mode="lines",
+            name=_libelle(n),
+            line=_trait(n),
+            hovertemplate="≥ %{y:.0f} A pendant %{x:.1f} % du cycle<extra></extra>",
         )
     )
 fig_i.update_layout(
-    yaxis_title="Courant (A)", height=400, showlegend=False,
-    margin=dict(t=20, b=90, l=50, r=15),
+    xaxis=dict(title="Part du cycle (%)", range=[0, 100]),
+    yaxis_title="Courant PB (A, valeur absolue)",
+    height=360, margin=dict(t=20, b=40, l=50, r=15),
+    legend=dict(orientation="h", y=-0.22, x=0),
 )
 st.plotly_chart(fig_i, width="stretch")
  
