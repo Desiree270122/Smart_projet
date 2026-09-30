@@ -409,7 +409,7 @@ def _resume_texte(strategie, p_dem, part_eb, part_pb, correction):
 
 # Interface
 
-st.title("Centre d'explicabilité")
+st.title("💡 Pourquoi cette décision ?")
 st.caption(
     "Comprendre en quelques secondes pourquoi l'algorithme a réparti la puissance "
     "de cette façon. Le contenu s'adapte au modèle : on ne montre que ce qu'il "
@@ -420,7 +420,7 @@ try:
     assurer_donnees_session(st)
 except FileNotFoundError as exc:
     st.error(str(exc))
-    st.info("Lance une fois le précalcul :  `python scripts/run_simulations.py`")
+    st.info("Lancez une fois le précalcul :  `python scripts/run_simulations.py`")
     st.stop()
 
 resultats = st.session_state.get("resultats_simulation")

@@ -21,13 +21,13 @@ from ems_core import (
 
 # Configuration de page gérée par le routeur Accueil.py.
 
-st.title("Préparation des données")
+st.title("📂 Préparer une simulation")
 
 st.write(
-    "Importe un fichier de cycle de conduite au format CSV, TXT, TSV ou Excel, "
+    "Importez un fichier de cycle de conduite au format CSV, TXT, TSV ou Excel, "
     "avec ou sans ligne d'en-tête. Les colonnes de temps, de vitesse, de puissance "
     "et d'accélération sont détectées automatiquement à partir de leur nom, en "
-    "français ou en anglais. Tu peux ensuite modifier les choix proposés."
+    "français ou en anglais. Vous pouvez ensuite modifier les choix proposés."
 )
 
 # 1. Importation du fichier
@@ -391,8 +391,8 @@ with st.form(key="prep_form"):
         value=int(repetition_auto),
         step=1,
         help=(
-            "Indique la valeur exacte connue pour ton fichier plutôt que "
-            "de te fier uniquement à la détection automatique."
+            "Indiquez la valeur exacte connue pour votre fichier plutôt que "
+            "de vous fier uniquement à la détection automatique."
         ),
         key="repetitions_input",
     )
@@ -483,7 +483,7 @@ if not valide and "cycle_pret" not in st.session_state:
 if valide:
     if speed_col is None and power_col is None:
         st.error(
-            "Sélectionne au moins une colonne de vitesse "
+            "Sélectionnez au moins une colonne de vitesse "
             "ou une colonne de puissance."
         )
         st.stop()
@@ -866,7 +866,7 @@ p = df_cycle["hasPower"]
 if abs(p.mean()) < 50 and p.max() < 200:
     st.warning(
         "La puissance moyenne calculée est presque nulle (< 50 W). "
-        "Vérifie l'unité de vitesse, la colonne sélectionnée et la fréquence "
+        "Vérifiez l'unité de vitesse, la colonne sélectionnée et la fréquence "
         "d'échantillonnage lorsque le fichier ne contient pas de colonne de temps. "
         "Dans le cas contraire, le SOC variera très peu pendant la simulation."
     )

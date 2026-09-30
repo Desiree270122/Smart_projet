@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 
 import ems_core as core
+from core.pertes import bilan_pertes
 
 
 # Emplacement standard du résultat précalculé.
@@ -57,7 +58,7 @@ def charger_reference(chemin=None) -> dict:
     if not chemin.exists():
         raise FileNotFoundError(
             f"Résultats précalculés introuvables : {chemin}. "
-            "Lance d'abord le précalcul :\n"
+            "Lancez d'abord le précalcul :\n"
             "    python scripts/run_simulations.py"
         )
     return joblib.load(chemin)
@@ -162,6 +163,7 @@ def calculer_metriques(donnees: dict) -> dict:
             "desequilibre_soc_moyen": float(np.nanmean(desequilibre)),
             "energie_non_servie_wh": _somme_wh(traj["P_unserved"]),
             "regen_rejetee_wh": _somme_wh(traj["P_regen_curtailed"]),
+            "pertes_totales_wh": bilan_pertes(traj)["total_wh"],
         }
 
         # Vrai coût physique (si le cycle est disponible dans le fichier).
@@ -221,6 +223,9 @@ CRITERES = {
     # convertisseur, continuité). Ce n'est pas une énergie : le modèle du HESS
     # étant sans pertes, toutes les répartitions consomment la même énergie.
     "Coût physique": ("cout_physique_moyen", "min"),
+    # Pertes R·I² des deux batteries et pertes du convertisseur (core/pertes.py),
+    # estimées après coup sur des trajectoires simulées sans pertes.
+    "Pertes estimées": ("pertes_totales_wh", "min"),
     "Préservation EB": ("soc_eb_final", "max"),
     "Préservation PB": ("soc_pb_final", "max"),
     "Équilibre EB/PB": ("desequilibre_soc_moyen", "min"),
@@ -255,13 +260,15 @@ EXPLICABILITE = {
     ),
     "EMS_MLP_neurosymbolic": (
         3,
-        "Neuro-symbolique : la décision part de la base floue issue de l'ontologie, "
-        "corrigée par une correction neuronale bornée — la décision reste traçable.",
+        "Neuro-symbolique : la décision se décompose exactement en base floue "
+        "(règles expertes) + correction neuronale bornée à ±0,2 ; la correction "
+        "elle-même reste opaque, mais son poids dans la décision est mesurable.",
     ),
     "EMS_LSTM_neurosymbolic": (
-        3,
-        "Neuro-symbolique temporel : états symboliques de l'ontologie en entrée et "
-        "correction bornée de la base floue.",
+        2,
+        "LSTM enrichi de quatre états symboliques de l'ontologie en entrée : ces "
+        "entrées ont un sens métier, mais la décision sort d'un réseau récurrent "
+        "opaque (pas de base floue ni de correction bornée) ; explication post-hoc.",
     ),
     "EMS_GNN": (
         2,
@@ -279,6 +286,29 @@ EXPLICABILITE = {
         "temporelle (gradient × entrée).",
     ),
 }
+
+
+# Les quatre familles comparées dans l'offre de stage 2SMART (objectif 5) :
+# règles fixes, ontologie seule, apprentissage seul, approche hybride.
+FAMILLES = {
+    "Règles fixes": ("EMS_power_limitation",),
+    "Ontologie seule": ("EMS_fuzzy_logic",),
+    "Apprentissage seul": ("EMS_MLP", "EMS_LSTM", "EMS_GNN"),
+    "Hybride neurosymbolique": ("EMS_MLP_neurosymbolic", "EMS_LSTM_neurosymbolic"),
+}
+
+
+def famille(cle: str) -> str:
+    """Famille d'une stratégie (clé interne) ; « — » si elle n'est pas classée."""
+    return next((f for f, membres in FAMILLES.items() if cle in membres), "—")
+
+
+# Même réseau, sans puis avec composante symbolique : c'est la comparaison qui
+# isole l'apport du symbolique (étude d'ablation).
+PAIRES_SYMBOLIQUE = (
+    ("EMS_MLP", "EMS_MLP_neurosymbolic"),
+    ("EMS_LSTM", "EMS_LSTM_neurosymbolic"),
+)
 
 
 def meilleure_strategie(metriques: dict, critere: str):

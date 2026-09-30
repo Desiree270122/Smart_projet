@@ -51,7 +51,7 @@ def _charger_mlp_pour_whatif():
 
 # Configuration de page gérée par le routeur Accueil.py.
 
-st.title("Raisonnement intelligent du système HESS")
+st.title("📚 Base de connaissances")
 st.caption(
     "Comprendre la décision énergétique.  ·  "
     "Technologie utilisée : ontologie OWL OntoHESS + règles expertes."
@@ -64,7 +64,7 @@ try:
     assurer_donnees_session(st)
 except FileNotFoundError as exc:
     st.error(str(exc))
-    st.info("Lance une fois le précalcul :  `python scripts/run_simulations.py`")
+    st.info("Lancez une fois le précalcul :  `python scripts/run_simulations.py`")
     st.stop()
 
 resultats = st.session_state.get("resultats_simulation")

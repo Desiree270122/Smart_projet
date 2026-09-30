@@ -136,9 +136,9 @@ with hero_g:
     st.markdown(
         """
         <div class="s2-hero-title">2SMART</div>
-        <div class="s2-hero-claim">Optimiser la répartition d'énergie entre deux batteries
-        hybrides grâce à l'IA explicable.</div>
-        <div class="s2-hero-tags">Expliquer &nbsp;·&nbsp; Simuler &nbsp;·&nbsp; Comparer &nbsp;·&nbsp; Optimiser</div>
+        <div class="s2-hero-claim">Répartir l'énergie entre les deux batteries d'un système
+        de stockage hybride, avec une IA explicable.</div>
+        <div class="s2-hero-tags">Simuler &nbsp;·&nbsp; Comparer &nbsp;·&nbsp; Expliquer</div>
         """,
         unsafe_allow_html=True,
     )
@@ -180,8 +180,10 @@ with comp3:
     with st.popover("🔄 Convertisseur", width="stretch"):
         st.markdown(
             "**Convertisseur**\n\n"
-            "- Répartit dynamiquement la puissance entre les deux batteries\n"
-            "- Possède ses propres limites de puissance à respecter"
+            "- Placé en série entre les deux batteries, il pilote le courant de la "
+            "batterie Énergie ; la batterie Puissance, sur le bus, fournit le complément\n"
+            "- Il ne traite que la différence de tension entre les batteries, soit environ "
+            "10 % de la puissance de la batterie Énergie : il reste petit et léger"
         )
 with comp4:
     with st.popover("🚗 Moteur et véhicule", width="stretch"):
@@ -203,7 +205,7 @@ st.markdown(
       <div class="s2-kpi"><div class="n" style="color:{C_BLEU}">{n_strat}</div><div class="l">Stratégies EMS disponibles</div></div>
       <div class="s2-kpi"><div class="n" style="color:{C_VERT}">{n_ia}</div><div class="l">Modèles IA évalués</div></div>
       <div class="s2-kpi"><div class="n" style="color:{C_ORANGE}">{pts_txt}</div><div class="l">Instants de conduite simulés</div></div>
-      <div class="s2-kpi"><div class="n" style="color:{C_VERT}">100 %</div><div class="l">Décisions expliquées</div></div>
+      <div class="s2-kpi"><div class="n" style="color:{C_VERT}">4</div><div class="l">Familles d'approches comparées</div></div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -256,7 +258,7 @@ benefices = [
     ("🧪 Simuler", "Observer la répartition de puissance sur un cycle de conduite complet.", C_BLEU),
     ("📊 Comparer", "Identifier la stratégie la plus performante selon le critère qui vous importe.", C_ORANGE),
     ("🧠 Expliquer", "Comprendre pourquoi une décision a été prise, à n'importe quel instant.", C_VERT),
-    ("⚙️ Optimiser", "Trouver le meilleur compromis entre performance et préservation des batteries.", C_ARDOISE),
+    ("🔋 Évaluer", "Estimer les pertes, le respect des contraintes et la sollicitation de chaque batterie.", C_ARDOISE),
 ]
 cols_ben = st.columns(4)
 for col, (titre, desc, coul) in zip(cols_ben, benefices):

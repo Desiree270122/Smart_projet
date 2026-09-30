@@ -5,11 +5,16 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+import ems_core as ec
+from core.pertes import RENDEMENT_CONVERTISSEUR, bilan_pertes, resistances_packs
 from core.resultats import (
     charger_reference,
     calculer_metriques,
+    famille,
     nom_affichage,
     CRITERES,
+    FAMILLES,
+    PAIRES_SYMBOLIQUE,
 )
 from core.style import couleur
 
@@ -24,6 +29,7 @@ COLONNES = {
     "desequilibre_soc_moyen": ("Déséquilibre SOC moyen", "{:.4f}"),
     "energie_non_servie_wh": ("Énergie non servie (Wh)", "{:.1f}"),
     "regen_rejetee_wh": ("Régén. rejetée (Wh)", "{:.1f}"),
+    "pertes_totales_wh": ("Pertes estimées (Wh)", "{:.0f}"),
 }
 
 
@@ -199,6 +205,33 @@ if hors_classement:
     )
 
 
+# Les quatre familles de l'offre de stage
+
+st.subheader("🧩 Les quatre familles de stratégies")
+st.caption(
+    "Le projet 2SMART compare quatre approches : règles fixes, ontologie seule, "
+    "apprentissage seul et approche hybride (ici neurosymbolique). Pour chacune, sa "
+    "meilleure stratégie sur le critère choisi."
+)
+lignes_f = []
+for fam, membres in FAMILLES.items():
+    presents = [n for n in membres if n in finis]
+    if not presents:
+        continue
+    classes_f = [n for n in presents if n in rangs]
+    meilleure = min(classes_f, key=lambda n: rangs[n]) if classes_f else None
+    lignes_f.append(
+        {
+            "Famille": fam,
+            "Stratégies": ", ".join(nom_affichage(n) for n in presents),
+            "Meilleure": nom_affichage(meilleure) if meilleure else "aucune (demande non fournie)",
+            COLONNES[met_c][0]: fmt(met_c, finis[meilleure]) if meilleure else "—",
+            "Rang": _rang_txt(rangs[meilleure]) if meilleure else "hors classement",
+        }
+    )
+st.dataframe(pd.DataFrame(lignes_f).set_index("Famille"), width="stretch")
+
+
 # 3 — Classement sur ce critère
 
 st.subheader("🏅 Classement sur ce critère")
@@ -250,7 +283,10 @@ meilleurs = {nom_c: _premiers(nom_c) for nom_c in CRIT}
 
 lignes = []
 for n in ordre + [x for x in noms if x not in ordre]:
-    ligne = {"Stratégie": nom_affichage(n) + ("" if n in classees else " (hors classement)")}
+    ligne = {
+        "Stratégie": nom_affichage(n) + ("" if n in classees else " (hors classement)"),
+        "Famille": famille(n),
+    }
     for nom_c, (met, sens_c) in CRIT.items():
         entete = f"{nom_c} {'↑' if sens_c == 'max' else '↓'}"
         texte = fmt(met, metriques[n].get(met, float("nan")))
@@ -259,6 +295,140 @@ for n in ordre + [x for x in noms if x not in ordre]:
     lignes.append(ligne)
 
 st.dataframe(pd.DataFrame(lignes).set_index("Stratégie"), width="stretch")
+
+
+# Apport du symbolique : même réseau, sans puis avec composante symbolique
+
+st.subheader("🔬 Apport du symbolique")
+st.caption(
+    "Même réseau, sans puis avec composante symbolique : c'est la comparaison qui isole "
+    "ce qu'apporte le symbolique. Les deux variantes ne l'intègrent pas de la même façon : "
+    "le MLP neurosymbolique part de la base floue et n'apprend qu'une correction bornée ; "
+    "le LSTM neurosymbolique reçoit quatre états symboliques en entrée supplémentaire."
+)
+
+
+def _ecart(met, a, b):
+    """Écart de b par rapport à a : en points pour un SOC, en % sinon."""
+    if met.startswith("soc_"):
+        return f"{(b - a) * 100:+.2f} pts"
+    return f"{(b - a) / abs(a) * 100:+.0f} %" if a else "—"
+
+
+CRIT_ABLATION = list(CRIT.items()) + [("Demande non fournie", ("energie_non_servie_wh", "min"))]
+for seul, ns in PAIRES_SYMBOLIQUE:
+    if seul not in metriques or ns not in metriques:
+        continue
+    lignes_a = []
+    for nom_c, (met, sens_c) in CRIT_ABLATION:
+        a, b = metriques[seul].get(met, float("nan")), metriques[ns].get(met, float("nan"))
+        if a != a or b != b:
+            continue
+        if fmt(met, a) == fmt(met, b):
+            verdict = "égal"
+        else:
+            verdict = "mieux" if ((b < a) if sens_c == "min" else (b > a)) else "moins bien"
+        lignes_a.append(
+            {
+                "Critère": nom_c,
+                nom_affichage(seul): fmt(met, a),
+                nom_affichage(ns): fmt(met, b),
+                "Écart": _ecart(met, a, b),
+                "Avec le symbolique": verdict,
+            }
+        )
+    st.markdown(f"**{nom_affichage(seul)} → {nom_affichage(ns)}**")
+    st.dataframe(pd.DataFrame(lignes_a).set_index("Critère"), width="stretch")
+    if seul in hors_classement or ns in hors_classement:
+        st.caption(
+            "Au moins une des deux stratégies ne fournit pas toute la demande : à "
+            "interpréter avec prudence (voir l'encadré « Hors classement »)."
+        )
+
+
+# Bilan des pertes (objectif du projet : rendement global et pertes du convertisseur)
+
+st.subheader("🔋 Bilan des pertes")
+st.caption(
+    "Pertes par effet Joule dans chaque batterie (R·I²) et pertes du convertisseur, qui "
+    "ne traite que la différence de tension entre les deux batteries (architecture en "
+    "cascade). Estimation faite après coup : les trajectoires ont été simulées sans pertes."
+)
+
+bilans = {n: bilan_pertes(resultats[n]) for n in noms}
+ordre_p = sorted(noms, key=lambda n: bilans[n]["total_wh"])
+etiquettes_p = [nom_affichage(n) + ("" if n in classees else " (hors cl.)") for n in ordre_p][::-1]
+COMPOSANTES = (
+    ("eb_wh", "Batterie Énergie (R·I²)", "#5B8DEF"),
+    ("pb_wh", "Batterie Puissance (R·I²)", "#30A46C"),
+    ("convertisseur_wh", "Convertisseur", "#E0A030"),
+)
+fig_p = go.Figure()
+for cle, lib, coul in COMPOSANTES:
+    fig_p.add_trace(
+        go.Bar(
+            y=etiquettes_p,
+            x=[bilans[n][cle] for n in ordre_p][::-1],
+            name=lib,
+            orientation="h",
+            marker_color=coul,
+            hovertemplate=f"{lib} : %{{x:.0f}} Wh<extra></extra>",
+        )
+    )
+fig_p.add_trace(
+    go.Scatter(
+        y=etiquettes_p,
+        x=[bilans[n]["total_wh"] for n in ordre_p][::-1],
+        mode="text",
+        text=[f"  {bilans[n]['total_wh']:.0f} Wh ({bilans[n]['part_traction'] * 100:.1f} %)" for n in ordre_p][::-1],
+        textposition="middle right",
+        showlegend=False,
+        hoverinfo="skip",
+    )
+)
+fig_p.update_layout(
+    barmode="stack",
+    height=40 * len(noms) + 110,
+    margin=dict(t=10, b=40, l=10, r=130),
+    xaxis_title="Pertes sur le cycle (Wh) — entre parenthèses : part de l'énergie de traction",
+    legend=dict(orientation="h", y=1.02, yanchor="bottom", x=0),
+)
+st.plotly_chart(fig_p, width="stretch")
+
+_ref_p = "EMS_power_limitation"
+_meilleure_p = min(classees, key=lambda n: bilans[n]["total_wh"])
+if _ref_p in bilans and _meilleure_p != _ref_p:
+    _gain = (bilans[_meilleure_p]["total_wh"] / bilans[_ref_p]["total_wh"] - 1) * 100
+    st.markdown(
+        f"Parmi les stratégies qui fournissent toute la demande, **{nom_affichage(_meilleure_p)}** "
+        f"a le moins de pertes ({bilans[_meilleure_p]['total_wh']:.0f} Wh), soit {_gain:+.0f} % "
+        f"par rapport au {nom_affichage(_ref_p).lower()} ({bilans[_ref_p]['total_wh']:.0f} Wh)."
+    )
+
+r_eb, r_pb = resistances_packs()
+with st.expander("Hypothèses et équations du bilan"):
+    st.markdown(
+        f"- Batterie Énergie : {ec.CELL_EB_RINT_OHM * 1000:.0f} mΩ par cellule, "
+        f"{ec.CELL_EB_N_SERIE} en série × {ec.CELL_EB_N_PARALLELE} en parallèle, soit "
+        f"**{r_eb * 1000:.0f} mΩ** pour le pack.\n"
+        f"- Batterie Puissance : {ec.CELL_PB_RINT_OHM * 1000:.1f} mΩ par cellule, "
+        f"{ec.CELL_PB_N_SERIE} en série × {ec.CELL_PB_N_PARALLELE} en parallèle, soit "
+        f"**{r_pb * 1000:.0f} mΩ** pour le pack.\n"
+        f"- Convertisseur : rendement de {RENDEMENT_CONVERTISSEUR * 100:.1f} %, mesuré à puissance "
+        "nominale ([1], fig. 33) ; il est plus faible à charge partielle.\n"
+        "- Tensions constantes (valeurs nominales), sans variation avec le SOC.\n"
+        "- Trajectoires simulées sans pertes : ce bilan compare les stratégies, mais ne "
+        "dit pas si le pack terminerait le cycle une fois les pertes prises en compte."
+    )
+    st.latex(
+        r"P_{conv} = (V_{EB} - V_{PB})\,I_{EB} \qquad "
+        r"P_{pertes} = R_{EB}\,I_{EB}^2 + R_{PB}\,I_{PB}^2 + (1 - \eta)\,\lvert P_{conv} \rvert"
+    )
+    st.caption(
+        "[1] C. A. Fonseca de Freitas et al., « Partial Power Converter for Electric "
+        "Vehicle Hybrid Energy Storage System Using a Controlled Current Source Cascade "
+        "Architecture », IEEE Access, vol. 12, 2024 (fig. 8, éq. (9)–(16))."
+    )
 
 
 # 5 — Courbes SOC, légende unique

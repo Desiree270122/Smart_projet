@@ -24,7 +24,7 @@ except ModuleNotFoundError:
         pass
  
  
-st.title("Explorer les résultats")
+st.title("📈 Explorer les résultats")
 st.caption(
     "Comment une stratégie se comporte-t-elle sur le cycle, et en quoi diffère-t-elle "
     "d'une référence ? Choisissez la stratégie à examiner."

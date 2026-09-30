@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 
-from ems_core import alpha_fuzzy_calc
+from ems_core import alpha_fuzzy_calc, LSTM_WINDOW
 from core.resultats import assurer_donnees_session, nom_affichage
 from core import ontology_explainer as ox
 from core.instant import choisir_instant
@@ -46,7 +46,7 @@ try:
     _source = assurer_donnees_session(st)
 except FileNotFoundError as exc:
     st.error(str(exc))
-    st.info("Lance une fois le précalcul :  `python scripts/run_simulations.py`")
+    st.info("Lancez une fois le précalcul :  `python scripts/run_simulations.py`")
     st.stop()
 
 resultats = st.session_state.get("resultats_simulation")
@@ -179,7 +179,6 @@ st.plotly_chart(fig, width="stretch")
 
 st.subheader(f"🧩 Comment {nom_affichage(strategie)} construit sa décision")
 
-is_ns = "neurosymbolic" in strategie
 is_fuzzy = strategie == "EMS_fuzzy_logic"
 is_phys = strategie == "EMS_power_limitation"
 
@@ -188,40 +187,63 @@ etats_txt = ", ".join(etats_actifs) if etats_actifs else "aucun état particulie
 filtre_txt = "correction appliquée" if corr_sel else "aucune correction"
 decision_txt = f"{alpha_final * 100:.0f} % pour la PB"
 
-if is_ns:
+if strategie == "EMS_MLP_neurosymbolic":
     etapes = [
-        ("Ontologie OntoHESS", "concepts et seuils décrivant le HESS"),
-        ("États symboliques détectés", etats_txt),
+        ("Concepts de l'ontologie OntoHESS", "seuils et états décrivant le HESS"),
+        ("États symboliques détectés (entrées du réseau)", etats_txt),
         ("Règles expertes floues", f"{alpha_fuzzy_sel * 100:.0f} % pour la PB"),
-        ("Correction du réseau neuronal", f"{(alpha_req - alpha_fuzzy_sel) * 100:+.0f} %"),
+        ("Correction bornée du réseau (±20 %)", f"{(alpha_req - alpha_fuzzy_sel) * 100:+.0f} %"),
         ("Filtre physique de sécurité", filtre_txt),
         ("Décision finale", decision_txt),
     ]
     note = (
-        "La décision part des connaissances de l'ontologie, puis des règles floues ; "
-        "le réseau n'apporte qu'une correction bornée."
+        "La décision part des règles floues ; le réseau n'apporte qu'une correction "
+        "bornée, dont on lit ici la valeur exacte."
+    )
+elif strategie == "EMS_LSTM_neurosymbolic":
+    etapes = [
+        ("États symboliques détectés (entrées du réseau)", etats_txt),
+        (
+            f"Réseau récurrent LSTM (fenêtre de {LSTM_WINDOW} instants)",
+            "prédit la demande et les variations de SOC des deux batteries",
+        ),
+        ("Répartition déduite des variations de SOC prédites", f"{alpha_req * 100:.0f} % pour la PB"),
+        ("Filtre physique de sécurité", filtre_txt),
+        ("Décision finale", decision_txt),
+    ]
+    note = (
+        "Le symbolique entre ici comme information supplémentaire du réseau : il n'y a "
+        "ni base floue ni correction bornée. La décision reste celle d'un LSTM."
     )
 elif is_fuzzy:
     etapes = [
-        ("Ontologie OntoHESS", "concepts et seuils décrivant le HESS"),
-        ("États symboliques détectés", etats_txt),
-        ("Règles expertes floues", f"{alpha_fuzzy_sel * 100:.0f} % pour la PB"),
+        ("Concepts de l'ontologie OntoHESS", "SOC faible, forte traction, freinage…"),
+        ("Règles expertes floues (7 règles)", f"{alpha_fuzzy_sel * 100:.0f} % pour la PB"),
         ("Filtre physique de sécurité", filtre_txt),
         ("Décision finale", decision_txt),
     ]
-    note = "Décision entièrement issue des règles expertes formalisées par l'ontologie."
+    note = "Décision entièrement issue des règles expertes, sans apprentissage."
 elif is_phys:
     etapes = [
-        ("Ontologie OntoHESS", "règles SWRL de priorité à la batterie Énergie"),
-        ("États symboliques détectés", etats_txt),
-        ("Règle physique déterministe", "l'EB fournit en priorité, dans ses limites"),
+        ("Règle physique déterministe (« power limitation »)", "l'EB fournit en priorité, dans ses limites ; la PB complète"),
         ("Filtre physique de sécurité", filtre_txt),
         ("Décision finale", decision_txt),
     ]
-    note = "Décision déterministe dont les branches correspondent aux règles SWRL de l'ontologie."
+    note = (
+        "Cette règle n'exécute pas l'ontologie : ses branches correspondent aux règles "
+        "SWRL R9 à R17 d'OntoHESS, qui permettent de la relire a posteriori."
+    )
 else:
+    _reseau = {
+        "EMS_MLP": ("Réseau de neurones dense", "prédit directement la répartition"),
+        "EMS_GNN": ("Réseau de neurones sur graphe", "prédit directement la répartition"),
+        "EMS_LSTM": (
+            f"Réseau récurrent LSTM (fenêtre de {LSTM_WINDOW} instants)",
+            "prédit la demande et les variations de SOC ; la répartition en est déduite",
+        ),
+    }.get(strategie, ("Réseau neuronal", "prédit la répartition"))
     etapes = [
-        ("Réseau neuronal", "prédit directement la répartition"),
+        _reseau,
         ("Filtre physique de sécurité", filtre_txt),
         ("Décision finale", decision_txt),
     ]
