@@ -31,6 +31,7 @@ from ems_core import (
     GNN_SCALER_FILE,
     GNN_NODE_NAMES,
     DEVICE,
+    ALPHA_GRID_STEP,
     EPS_POWER_W,
     V_EB_PACK_NOM,
     V_PB_PACK_NOM,
@@ -499,6 +500,15 @@ with tab_apercu:
             "Le filtre de sécurité a corrigé la répartition proposée pour respecter "
             "les limites physiques des batteries et du convertisseur."
         )
+    elif abs(alpha_final - alpha_requested) > 1e-9:
+        # Pas de la grille avec lequel ces résultats ont été simulés, et même
+        # tolérance que resoudre_decision_physique (ems_core).
+        _pas = st.session_state.get("pas_alpha") or ALPHA_GRID_STEP
+        st.caption(
+            f"alpha demandé {alpha_requested:.3f}, alpha appliqué {alpha_final:.3f} : le filtre "
+            f"choisit alpha sur une grille de pas {_pas:g}. Un écart inférieur à "
+            f"{_pas * 1.1:.4f} est un arrondi à cette grille, pas une correction."
+        )
 
 
 # Pourquoi ? — causes, confiance, contrefactuels (source : ontologie OntoHESS)
@@ -870,8 +880,8 @@ with tab_science:
     else:
         st.info(
             "Cette stratégie n'utilise pas d'états symboliques. Voir l'onglet "
-            "« Raisonnement du modèle » pour son explication fidèle (règles, gradients "
-            "ou importance des composants)."
+            "« 3. Raisonnement », section « Ce que la stratégie utilise réellement » "
+            "(règles, gradients ou importance des composants)."
         )
 
     st.subheader("Règles de l'ontologie non activées")

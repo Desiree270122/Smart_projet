@@ -87,6 +87,7 @@ def assurer_donnees_session(st, chemin=None) -> str:
     st.session_state["avertissements_simulation"] = donnees.get("avertissements", [])
     st.session_state["soc_eb0"] = donnees["meta"].get("soc_eb0", 1.0)
     st.session_state["soc_pb0"] = donnees["meta"].get("soc_pb0", 1.0)
+    st.session_state["pas_alpha"] = donnees["meta"].get("pas_alpha")
     st.session_state["_source_donnees"] = "référence précalculée"
     return "référence précalculée"
 
@@ -216,7 +217,10 @@ def statistiques_detaillees(donnees: dict) -> dict:
 # Tous sont MESURÉS sur la trajectoire simulée.
 CRITERES = {
     "Sécurité physique": ("nb_violations", "min"),
-    "Coût énergétique": ("cout_physique_moyen", "min"),
+    # Coût multicritère du filtre (stress de puissance, débit, risque SOC,
+    # convertisseur, continuité). Ce n'est pas une énergie : le modèle du HESS
+    # étant sans pertes, toutes les répartitions consomment la même énergie.
+    "Coût physique": ("cout_physique_moyen", "min"),
     "Préservation EB": ("soc_eb_final", "max"),
     "Préservation PB": ("soc_pb_final", "max"),
     "Équilibre EB/PB": ("desequilibre_soc_moyen", "min"),

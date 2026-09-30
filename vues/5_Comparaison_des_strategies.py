@@ -48,14 +48,16 @@ def fmt(met, val):
     return COLONNES.get(met, ("", "{:.4f}"))[1].format(val)
 
 
-def _rangs_competition(finis, sens):
-    """Rang 1..N avec ex æquo : deux valeurs égales reçoivent le même rang
-    (style sportif : 1, 1, puis 3). Retourne (ordre trié, {stratégie: rang})."""
+def _rangs_competition(finis, sens, affiche):
+    """Rang 1..N avec ex æquo (style sportif : 1, 1, puis 3). Deux valeurs
+    identiques une fois affichées (affiche : valeur -> texte) sont ex æquo : le
+    classement ne départage pas ce que le tableau montre égal.
+    Retourne (ordre trié, {stratégie: rang})."""
     ordre = sorted(finis, key=lambda n: finis[n], reverse=(sens == "max"))
     rangs, rang, precedent = {}, 0, None
     for i, n in enumerate(ordre):
-        v = finis[n]
-        if precedent is None or abs(v - precedent) > 1e-9:
+        v = affiche(finis[n])
+        if v != precedent:
             rang = i + 1
         rangs[n] = rang
         precedent = v
@@ -88,6 +90,18 @@ except FileNotFoundError as exc:
 
 noms = list(metriques.keys())
 
+# Une stratégie qui n'a pas fourni toute la puissance demandée est sortie du
+# classement : le modèle du HESS étant sans pertes, l'énergie non fournie reste
+# dans les batteries et fait paraître son SOC final meilleur à tort.
+SEUIL_NON_SERVI_WH = 1.0
+non_servie = {n: metriques[n].get("energie_non_servie_wh", 0.0) for n in noms}
+classees = [n for n in noms if non_servie[n] < SEUIL_NON_SERVI_WH] or list(noms)
+hors_classement = [n for n in noms if n not in classees]
+
+
+def _wh(x):
+    return f"{x:,.0f} Wh".replace(",", " ")
+
 st.caption(
     f"{meta['cycle_nom']}  ·  {meta['nb_points']:,}".replace(",", " ")
     + f" points  ·  {len(noms)} stratégies  ·  {len(CRIT)} critères"
@@ -100,9 +114,10 @@ st.divider()
 
 # 1 — Le critère pilote la page
 
-# Par défaut, le coût physique : c'est l'objectif que l'EMS cherche à réduire, et
-# il départage les stratégies (« Sécurité physique » donne 4 ex æquo à 0 violation).
-CRITERE_DEFAUT = "Coût énergétique"
+# Par défaut, un critère qui départage nettement les stratégies classées :
+# « Sécurité physique » les met toutes à égalité (0 violation) et « Coût
+# physique » ne sépare le GNN du modèle physique que de 0,2 %.
+CRITERE_DEFAUT = "Alignement au filtre physique"
 critere = st.selectbox(
     "Critère à privilégier",
     list(CRIT.keys()),
@@ -111,32 +126,40 @@ critere = st.selectbox(
 met_c, sens = CRIT[critere]
 
 
+def _classement(critere_c):
+    """(ordre, rangs) des stratégies classées sur un critère, ex æquo compris."""
+    met, sens_c = CRIT[critere_c]
+    v = {n: metriques[n].get(met, float("nan")) for n in classees}
+    v = {n: x for n, x in v.items() if x == x}
+    return _rangs_competition(v, sens_c, lambda x: fmt(met, x))
+
+
 def _premiers(critere_c):
     """Stratégies classées premières sur un critère, ex æquo compris."""
-    met, sens_c = CRIT[critere_c]
-    v = {n: metriques[n].get(met, float("nan")) for n in noms}
-    v = {n: x for n, x in v.items() if x == x}
-    if not v:
-        return set()
-    _, r = _rangs_competition(v, sens_c)
-    return {n for n, k in r.items() if k == 1}
+    return {n for n, k in _classement(critere_c)[1].items() if k == 1}
 
 
 vals = {n: metriques[n].get(met_c, float("nan")) for n in noms}
 finis = {n: v for n, v in vals.items() if v == v}
-ordre, rangs = _rangs_competition(finis, sens)
+ordre, rangs = _classement(critere)
 gagnants = [n for n in ordre if rangs.get(n) == 1]  # ex æquo au rang 1
+# Hors classement : affichées après les autres, dans le même sens de tri.
+ordre_hors = sorted((n for n in hors_classement if n in finis), key=lambda n: finis[n], reverse=(sens == "max"))
 
 
 # 2 — La réponse
 
-if not finis:
+if not gagnants:
     st.warning("Métrique indisponible pour ce critère.")
 else:
     ref = gagnants[0]
     raisons = [
         f"{COLONNES[met_c][0]} = {fmt(met_c, finis[ref])} "
-        f"(meilleur résultat parmi les {len(noms)} stratégies évaluées)"
+        + (
+            f"(meilleur résultat parmi les {len(classees)} stratégies qui fournissent toute la demande)"
+            if hors_classement
+            else f"(meilleur résultat parmi les {len(noms)} stratégies évaluées)"
+        )
     ]
     if met_c != "nb_violations" and all(metriques[g].get("nb_violations", 1) == 0 for g in gagnants):
         raisons.append("aucune violation des contraintes de SOC sur l'ensemble du cycle")
@@ -166,25 +189,47 @@ else:
         for r in raisons:
             st.markdown(f"- {r}")
 
+if hors_classement:
+    st.warning(
+        "**Hors classement** : "
+        + ", ".join(f"{nom_affichage(n)} ({_wh(non_servie[n])} non fournis)" for n in hors_classement)
+        + ". Ces stratégies n'ont pas fourni toute la puissance demandée sur le cycle. "
+        "Le modèle du HESS étant sans pertes, l'énergie non fournie reste dans les "
+        "batteries : leur SOC final paraît meilleur, mais ce n'est pas un gain."
+    )
+
 
 # 3 — Classement sur ce critère
 
 st.subheader("🏅 Classement sur ce critère")
-st.caption("Les stratégies au résultat identique partagent le même rang (ex æquo).")
+st.caption(
+    "Les stratégies au résultat identique (à la précision affichée) partagent le même rang."
+    + (" En grisé, en bas : les stratégies hors classement." if ordre_hors else "")
+)
 
+barres = ordre + ordre_hors
 fig_rang = go.Figure(
     go.Bar(
-        x=[finis[n] for n in ordre][::-1],
-        y=[f"{_rang_txt(rangs[n])}  {nom_affichage(n)}" for n in ordre][::-1],
+        x=[finis[n] for n in barres][::-1],
+        y=[
+            (f"{_rang_txt(rangs[n])}  " if n in rangs else "hors cl.  ") + nom_affichage(n)
+            for n in barres
+        ][::-1],
         orientation="h",
-        marker_color=[couleur(n) for n in ordre][::-1],
-        text=[fmt(met_c, finis[n]) for n in ordre][::-1],
+        marker=dict(
+            color=[couleur(n) for n in barres][::-1],
+            opacity=[1.0 if n in rangs else 0.35 for n in barres][::-1],
+        ),
+        text=[
+            fmt(met_c, finis[n]) + ("" if n in rangs else f"  ·  {_wh(non_servie[n])} non fournis")
+            for n in barres
+        ][::-1],
         textposition="outside",
         hoverinfo="skip",
     )
 )
 fig_rang.update_layout(
-    height=40 * len(ordre) + 80,
+    height=40 * len(barres) + 80,
     margin=dict(t=10, b=30, l=10, r=60),
     xaxis_title=COLONNES[met_c][0] + (" (plus haut = mieux)" if sens == "max" else " (plus bas = mieux)"),
     yaxis_title=None,
@@ -196,25 +241,21 @@ st.plotly_chart(fig_rang, width="stretch")
 # 4 — Tableau unique, stratégies en lignes
 
 st.subheader("📊 Toutes les stratégies, critère par critère")
-st.caption("★ = meilleure valeur (plusieurs ★ si ex æquo). La flèche indique le sens favorable.")
+st.caption(
+    "★ = meilleure valeur parmi les stratégies classées (plusieurs ★ si ex æquo). "
+    "La flèche indique le sens favorable."
+)
 
-meilleurs = {}
-for nom_c, (met, sens_c) in CRIT.items():
-    v = {n: metriques[n].get(met, float("nan")) for n in noms}
-    f = {n: x for n, x in v.items() if x == x}
-    if not f:
-        meilleurs[nom_c] = set()
-        continue
-    cible = (min if sens_c == "min" else max)(f.values())
-    meilleurs[nom_c] = {n for n, x in f.items() if abs(x - cible) <= 1e-9}
+meilleurs = {nom_c: _premiers(nom_c) for nom_c in CRIT}
 
 lignes = []
 for n in ordre + [x for x in noms if x not in ordre]:
-    ligne = {"Stratégie": nom_affichage(n)}
+    ligne = {"Stratégie": nom_affichage(n) + ("" if n in classees else " (hors classement)")}
     for nom_c, (met, sens_c) in CRIT.items():
         entete = f"{nom_c} {'↑' if sens_c == 'max' else '↓'}"
         texte = fmt(met, metriques[n].get(met, float("nan")))
         ligne[entete] = texte + (" ★" if n in meilleurs[nom_c] else "")
+    ligne["Demande non fournie (Wh)"] = f"{non_servie[n]:.0f}"
     lignes.append(ligne)
 
 st.dataframe(pd.DataFrame(lignes).set_index("Stratégie"), width="stretch")
@@ -283,19 +324,21 @@ with st.expander("Score composite toutes stratégies confondues"):
                 s[n].append(r if sens_c == "max" else 1.0 - r)
         return {n: (sum(v) / len(v) if v else 0.0) for n, v in s.items()}
 
-    sc = _scores(metriques)
-    _, rangs_sc = _rangs_competition(sc, "max")
+    sc = _scores({n: metriques[n] for n in classees})
+    _, rangs_sc = _rangs_competition(sc, "max", lambda v: f"{v * 100:.0f}")
     clst = sorted(sc.items(), key=lambda kv: kv[1], reverse=True)
     ecart = (max(sc.values()) - min(sc.values())) * 100 if sc else 0.0
 
     st.caption(
         "Moyenne des scores normalisés sur tous les critères, chacun ramené à "
-        "l'intervalle observé entre les sept stratégies. Ce score pondère tous "
-        "les critères également, ce qui n'est pas un choix neutre : il sert de "
-        "repère, pas de verdict."
+        f"l'intervalle observé entre les {len(classees)} stratégies classées. Ce score "
+        "pondère tous les critères également, ce qui n'est pas un choix neutre : il "
+        "sert de repère, pas de verdict."
     )
     for n, v in clst:
         st.markdown(f"{_rang_txt(rangs_sc[n])}. {nom_affichage(n)} — {v * 100:.0f} %")
+    for n in hors_classement:
+        st.markdown(f"— {nom_affichage(n)} — hors classement ({_wh(non_servie[n])} non fournis)")
     if ecart < 15:
         st.caption(
             f"Écart de {ecart:.0f} points entre la première et la dernière : "

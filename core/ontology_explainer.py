@@ -31,6 +31,8 @@ VOCABULAIRE = {
     "hasPowerBattery": "puissance de la batterie",
     "hasOutputPowerBattery": "puissance fournie par une batterie",
     "hasOutputPowerConverter": "puissance de sortie du convertisseur",
+    "hasInputPowerConverter": "puissance d'entrée du convertisseur",
+    "hasOperatingModeDriventrain": "mode de fonctionnement de la chaîne de traction",
     "hasVoltageBattery": "tension de la batterie",
     "hasCurrentBattery": "courant de la batterie",
     "hasSocBattery": "état de charge de la batterie",
@@ -512,7 +514,8 @@ def evaluer_regles(p_dem, soc_eb, soc_pb):
         entree = {
             "id": regle["id"],
             "classes": [CLASSES_FR.get(c, c) for c in regle["classes"]],
-            "conclusions": [_fr(c) for c in regle["conclusions"]],
+            # Une règle qui conclut sur les deux batteries répète la même propriété.
+            "conclusions": list(dict.fromkeys(_fr(c) for c in regle["conclusions"])),
             "details": details,
         }
         if not connue:
@@ -635,12 +638,12 @@ def contrefactuels(p_dem, soc_eb, soc_pb):
 
     if p_dem > core.P_EB_MAX_W:
         phrases.append(
-            f"Si la demande avait été inférieure à {seuil_kw:.0f} kW (au lieu de "
+            f"Si la demande avait été inférieure à {seuil_kw:.1f} kW (au lieu de "
             f"{p_kw:.1f} kW), la batterie Énergie aurait pu fournir seule la puissance."
         )
     elif p_dem > core.EPS_POWER_W:
         phrases.append(
-            f"Si la demande avait dépassé {seuil_kw:.0f} kW (au lieu de {p_kw:.1f} kW), "
+            f"Si la demande avait dépassé {seuil_kw:.1f} kW (au lieu de {p_kw:.1f} kW), "
             "la batterie Puissance aurait dû compléter."
         )
 

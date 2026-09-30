@@ -355,6 +355,7 @@ if st.button("Lancer la simulation", type="primary"):
         )
 
     st.session_state["resultats_simulation"] = resultats
+    st.session_state["pas_alpha"] = pas_alpha
     st.session_state["avertissements_simulation"] = avertissements
     st.session_state["erreurs_chargement"] = erreurs_pertinentes
     st.session_state["duree_simulation"] = time.time() - debut
