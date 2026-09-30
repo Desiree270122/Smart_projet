@@ -8,7 +8,6 @@ import streamlit as st
 from core.resultats import (
     charger_reference,
     calculer_metriques,
-    meilleure_strategie,
     nom_affichage,
     CRITERES,
 )
@@ -101,12 +100,27 @@ st.divider()
 
 # 1 — Le critère pilote la page
 
+# Par défaut, le coût physique : c'est l'objectif que l'EMS cherche à réduire, et
+# il départage les stratégies (« Sécurité physique » donne 4 ex æquo à 0 violation).
+CRITERE_DEFAUT = "Coût énergétique"
 critere = st.selectbox(
     "Critère à privilégier",
     list(CRIT.keys()),
-    index=list(CRIT.keys()).index("Sécurité physique") if "Sécurité physique" in CRIT else 0,
+    index=list(CRIT.keys()).index(CRITERE_DEFAUT) if CRITERE_DEFAUT in CRIT else 0,
 )
 met_c, sens = CRIT[critere]
+
+
+def _premiers(critere_c):
+    """Stratégies classées premières sur un critère, ex æquo compris."""
+    met, sens_c = CRIT[critere_c]
+    v = {n: metriques[n].get(met, float("nan")) for n in noms}
+    v = {n: x for n, x in v.items() if x == x}
+    if not v:
+        return set()
+    _, r = _rangs_competition(v, sens_c)
+    return {n for n, k in r.items() if k == 1}
+
 
 vals = {n: metriques[n].get(met_c, float("nan")) for n in noms}
 finis = {n: v for n, v in vals.items() if v == v}
@@ -124,14 +138,16 @@ else:
         f"{COLONNES[met_c][0]} = {fmt(met_c, finis[ref])} "
         f"(meilleur résultat parmi les {len(noms)} stratégies évaluées)"
     ]
-    if met_c != "nb_violations" and metriques[ref].get("nb_violations", 1) == 0:
+    if met_c != "nb_violations" and all(metriques[g].get("nb_violations", 1) == 0 for g in gagnants):
         raisons.append("aucune violation des contraintes de SOC sur l'ensemble du cycle")
-    autres = [
-        c for c in CRIT
-        if c != critere and meilleure_strategie(metriques, c)[0] in gagnants
-    ]
+    # Un autre critère n'est cité que si CHAQUE stratégie en tête y est aussi première.
+    autres = [c for c in CRIT if c != critere and set(gagnants) <= _premiers(c)]
     if autres:
-        raisons.append("également classées premières pour : " + ", ".join(autres))
+        raisons.append(
+            ("également classée première pour : " if len(gagnants) == 1
+             else "également classées premières ensemble pour : ")
+            + ", ".join(autres)
+        )
 
     _noms_g = [f"**{nom_affichage(g)}**" for g in gagnants]
     _liste_g = " et ".join([", ".join(_noms_g[:-1]), _noms_g[-1]]) if len(_noms_g) > 1 else _noms_g[0]

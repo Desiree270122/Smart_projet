@@ -22,7 +22,6 @@ import torch
 
 from ems_core import (
     analyser_capacites_hess,
-    compute_symbolic_states,
     alpha_fuzzy_calc,
     resoudre_decision_physique,
     appliquer_scaler,
@@ -37,6 +36,7 @@ from ems_core import (
 )
 from core.resultats import assurer_donnees_session, nom_affichage
 from core.navigation import pied_navigation
+from core.instant import choisir_instant
 from core import ontology_explainer as ox
 
 
@@ -77,12 +77,11 @@ if not resultats or df is None:
 
 # Choix de l'instant et de la stratégie de référence
 
-n_points = min(len(traj["P_EB"]) for traj in resultats.values())
+n_points = min([len(df)] + [len(traj["P_EB"]) for traj in resultats.values()])
 
 col_t, col_s = st.columns([2, 1])
 
-with col_t:
-    instant = st.slider("Instant analysé", 0, n_points - 1, n_points // 2)
+instant, t_sel = choisir_instant(df, n_points, col_t)
 
 with col_s:
     strategie = st.selectbox(
@@ -93,7 +92,6 @@ with col_s:
 
 traj = resultats[strategie]
 
-t_sel = float(df["time"].iloc[instant]) if "time" in df.columns else float(instant)
 vitesse_ms = float(df["speed"].iloc[instant]) if "speed" in df.columns else None
 accel = float(df["hasAcceleration"].iloc[instant]) if "hasAcceleration" in df.columns else 0.0
 soc_eb = float(traj["SOC_EB"][instant])
@@ -118,7 +116,6 @@ else:
 mode_whatif = not utiliser_cycle
 
 cap = analyser_capacites_hess(p_dem, soc_eb, soc_pb)
-etats = compute_symbolic_states(p_dem, soc_eb, soc_pb)
 
 if utiliser_cycle:
     # Décision réellement prise par la stratégie choisie (précalculée).
@@ -165,6 +162,9 @@ else:
     p_eb = float(decision_wi["P_EB_final"])
     p_pb = float(decision_wi["P_PB_final"])
     correction = bool(decision_wi["correction_applied"])
+
+# Même source d'état que les autres pages, avec la puissance EB de la décision.
+etats = ox.etat_instant(p_dem, soc_eb, soc_pb, p_eb=p_eb)["symboliques"]
 
 
 def kw(x):

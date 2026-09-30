@@ -279,11 +279,61 @@ def vocabulaire_ontologie():
 
 
 # États de fonctionnement réellement déclarés comme individus dans l'ontologie.
+# Les identifiants OWL gardent le mot « Overload », mais l'état signifie
+# seulement que la demande dépasse la limite de la batterie Énergie seule
+# (règles R9/R10/R12, seuils pEB_max_value / pEB_min_value) : le HESS, lui,
+# n'est pas en surcharge. Les libellés affichés le disent tel quel.
 ETATS_ONTOLOGIE = {
-    "state_Normal": "Fonctionnement normal",
-    "state_Overload_High": "Surcharge en traction",
-    "state_Overload_Low": "Surcharge en récupération",
+    "state_Normal": "Dans les limites de la batterie Énergie",
+    "state_Overload_High": "Traction au-delà de la limite de la batterie Énergie",
+    "state_Overload_Low": "Récupération au-delà de la limite de la batterie Énergie",
 }
+
+# Versions courtes, pour les nœuds de graphe.
+ETATS_ONTOLOGIE_COURTS = {
+    "state_Normal": "Dans les limites EB",
+    "state_Overload_High": "Traction > limite EB",
+    "state_Overload_Low": "Récup. > limite EB",
+}
+
+# Libellés des états symboliques de compute_symbolic_states (entrées des
+# modèles neurosymboliques). Seuls libellés utilisés par les pages.
+LIBELLES_SYMBOLIQUES = {
+    "high_power_demand": "Forte demande de puissance",
+    "regenerative_braking": "Freinage régénératif",
+    "zero_power_demand": "Demande quasi nulle",
+    "converter_risk": "Convertisseur proche de sa limite",
+    "EB_available": "Batterie Énergie disponible",
+    "PB_available": "Batterie Puissance disponible",
+    "EB_low_SOC": "SOC batterie Énergie faible",
+    "PB_low_SOC": "SOC batterie Puissance faible",
+}
+
+
+def etat_fonctionnement(p_dem):
+    """Individu `state_*` de l'ontologie correspondant à la puissance demandée,
+    avec les seuils que comparent les règles SWRL (pEB_max_value, pEB_min_value)."""
+    if p_dem > core.P_EB_MAX_W:
+        return "state_Overload_High"
+    if p_dem < core.P_EB_MIN_W:
+        return "state_Overload_Low"
+    return "state_Normal"
+
+
+def etat_instant(p_dem, soc_eb, soc_pb, p_eb=None):
+    """Source UNIQUE de ce que les pages affichent comme « état » à un instant :
+    l'état de fonctionnement inféré par l'ontologie, et les états symboliques
+    fournis aux modèles neurosymboliques.
+
+    p_eb : puissance réellement fournie par la batterie Énergie à cet instant
+    (P_EB de la trajectoire). Toutes les pages passent cette même grandeur.
+    """
+    cle = etat_fonctionnement(p_dem)
+    return {
+        "fonctionnement": cle,
+        "libelle": ETATS_ONTOLOGIE[cle],
+        "symboliques": core.compute_symbolic_states(p_dem, soc_eb, soc_pb, p_eb=p_eb),
+    }
 
 
 def interpretation_ontologique(p_dem, soc_eb, soc_pb):
@@ -314,20 +364,18 @@ def interpretation_ontologique(p_dem, soc_eb, soc_pb):
     ]
 
     # L'état est déterminé par les mêmes seuils que ceux comparés dans les règles.
-    if p_dem > core.P_EB_MAX_W:
-        etat = "state_Overload_High"
+    etat = etat_fonctionnement(p_dem)
+    if etat == "state_Overload_High":
         justification = (
             f"la puissance demandée ({p_dem / 1000:.1f} kW) dépasse `pEB_max_value` "
             f"({core.P_EB_MAX_W / 1000:.1f} kW)"
         )
-    elif p_dem < core.P_EB_MIN_W:
-        etat = "state_Overload_Low"
+    elif etat == "state_Overload_Low":
         justification = (
             f"la puissance récupérée ({p_dem / 1000:.1f} kW) dépasse la capacité de "
             f"recharge `pEB_min_value` ({core.P_EB_MIN_W / 1000:.1f} kW)"
         )
     else:
-        etat = "state_Normal"
         justification = (
             f"la puissance demandée ({p_dem / 1000:.1f} kW) reste dans les limites "
             f"`pEB_min_value` … `pEB_max_value`"
@@ -478,44 +526,62 @@ def evaluer_regles(p_dem, soc_eb, soc_pb):
 
 
 def concepts_actifs(p_dem, soc_eb, soc_pb, p_eb=None):
-    """Concepts de l'ontologie reconnus à cet instant, avec la mesure qui les
-    justifie. S'appuie sur compute_symbolic_states (reproduction à seuils fixes
-    des règles) et nomme les classes réellement présentes dans OntoHESS2.owl."""
-    etats = core.compute_symbolic_states(p_dem, soc_eb, soc_pb, p_eb=p_eb)
+    """Concepts reconnus à cet instant, avec la mesure qui les justifie.
+
+    Le premier est l'état de fonctionnement inféré par l'ontologie (le même que
+    sur les autres pages) ; les suivants sont les états symboliques fournis aux
+    modèles, rattachés aux classes présentes dans OntoHESS2.owl."""
+    etat = etat_instant(p_dem, soc_eb, soc_pb, p_eb=p_eb)
+    etats = etat["symboliques"]
     p_kw = float(p_dem) / 1000.0
+    au_dela = etat["fonctionnement"] != "state_Normal"
 
     return [
         {
-            "concept": "Overload",
-            "libelle": "Surcharge (forte demande de puissance)",
+            "concept": etat["fonctionnement"],
+            "libelle": etat["libelle"],
+            "actif": au_dela,
+            "mesure": (
+                f"puissance demandée {p_kw:+.1f} kW, limites de la batterie Énergie "
+                f"{core.P_EB_MIN_W / 1000:.1f} … {core.P_EB_MAX_W / 1000:.1f} kW"
+            ),
+            "consequence": (
+                "la batterie Puissance doit compléter la batterie Énergie"
+                if au_dela
+                else "la batterie Énergie peut assurer seule la demande"
+            ),
+        },
+        {
+            "concept": "PowerState (forte demande)",
+            "libelle": LIBELLES_SYMBOLIQUES["high_power_demand"],
             "actif": bool(etats["high_power_demand"]),
             "mesure": f"puissance demandée {abs(p_kw):.1f} kW, seuil {core.HIGH_POWER_THRESHOLD_W / 1000:.0f} kW",
             "consequence": "la batterie Puissance est davantage sollicitée",
         },
         {
-            "concept": "NormalOperation",
-            "libelle": "Fonctionnement normal de la batterie Énergie",
+            "concept": "SOCCondition",
+            "libelle": LIBELLES_SYMBOLIQUES["EB_available"],
             "actif": bool(etats["EB_available"]),
             "mesure": f"SOC de l'EB {soc_eb * 100:.0f} %, seuil minimal {core.SOC_EB_MIN * 100:.0f} %",
             "consequence": "la batterie Énergie peut fournir de la puissance",
         },
         {
             "concept": "SOCState (bas)",
-            "libelle": "État de charge bas de la batterie Énergie",
+            "libelle": LIBELLES_SYMBOLIQUES["EB_low_SOC"],
             "actif": bool(etats["EB_low_SOC"]),
             "mesure": f"SOC de l'EB {soc_eb * 100:.0f} %",
             "consequence": "la batterie Énergie doit être protégée",
         },
         {
             "concept": "PowerState (récupération)",
-            "libelle": "Freinage récupératif",
+            "libelle": LIBELLES_SYMBOLIQUES["regenerative_braking"],
             "actif": bool(etats["regenerative_braking"]),
             "mesure": f"puissance demandée {p_kw:+.1f} kW",
             "consequence": "l'énergie récupérée est dirigée vers les batteries",
         },
         {
             "concept": "ConverterPower (limite)",
-            "libelle": "Convertisseur proche de sa limite",
+            "libelle": LIBELLES_SYMBOLIQUES["converter_risk"],
             "actif": bool(etats["converter_risk"]),
             "mesure": f"seuil d'alerte {core.CONVERTER_RISK_THRESHOLD * 100:.0f} % de la capacité",
             "consequence": "la sollicitation du convertisseur doit être limitée",

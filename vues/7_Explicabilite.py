@@ -45,6 +45,7 @@ from ems_core import (
 )
 from core.resultats import assurer_donnees_session, nom_affichage
 from core.navigation import pied_navigation
+from core.instant import choisir_instant
 from core import ontology_explainer as ox
 
 
@@ -79,19 +80,17 @@ LABELS_NOEUDS = {
 }
 
 ETATS_NS = {
-    "high_power_demand": "Forte demande de puissance",
-    "regenerative_braking": "Freinage / récupération",
-    "zero_power_demand": "Demande quasi nulle",
-    "converter_risk": "Convertisseur proche de sa limite",
+    cle: ox.LIBELLES_SYMBOLIQUES[cle]
+    for cle in ("high_power_demand", "regenerative_braking", "zero_power_demand", "converter_risk")
 }
 ETATS_NS_KEYS = set(ETATS_NS)
 
 
 def _etats_ns_detail(p_dem, soc_eb, soc_pb, p_eb=None):
     """Détail dynamique des 4 états symboliques : pour chacun, l'état (oui/non),
-    la grandeur mesurée et le seuil. Reproduit exactement les conditions de
-    compute_symbolic_states pour que l'état affiché corresponde à la valeur."""
-    etats = compute_symbolic_states(p_dem, soc_eb, soc_pb, p_eb=p_eb)
+    la grandeur mesurée et le seuil. Passe par la même source d'état que les
+    autres pages, pour que l'état affiché corresponde à la valeur."""
+    etats = ox.etat_instant(p_dem, soc_eb, soc_pb, p_eb=p_eb)["symboliques"]
 
     p_kw = p_dem / 1000.0
     seuil_kw = HIGH_POWER_THRESHOLD_W / 1000.0
@@ -299,9 +298,10 @@ def _graphe_connaissances(etat_actif):
         "batteryP1": (0.0, 1.0, "Batterie Puissance"),
         "converter1": (1.6, 1.0, "Convertisseur"),
         "load1": (1.6, 0.0, "Charge (moteur)"),
-        "state_Normal": (-1.6, -1.0, "Normal"),
-        "state_Overload_High": (0.0, -1.0, "Surcharge traction"),
-        "state_Overload_Low": (1.6, -1.0, "Surcharge récup."),
+        **{
+            cle: (x, -1.0, ox.ETATS_ONTOLOGIE_COURTS[cle])
+            for cle, x in (("state_Normal", -1.6), ("state_Overload_High", 0.0), ("state_Overload_Low", 1.6))
+        },
     }
     aretes = [
         ("hess1", "batteryE1", "isComposedOf"),
@@ -428,17 +428,15 @@ if not resultats or df is None:
     st.warning("Aucune donnée disponible.")
     st.stop()
 
-n = min(len(traj["P_EB"]) for traj in resultats.values())
+n = min([len(df)] + [len(traj["P_EB"]) for traj in resultats.values()])
 
 col_t, col_s = st.columns([2, 1])
-with col_t:
-    instant = st.slider("Instant analysé", 0, n - 1, n // 2)
+instant, t_sel = choisir_instant(df, n, col_t)
 with col_s:
     strategie = st.selectbox("Stratégie", list(resultats.keys()), format_func=nom_affichage)
 
 traj = resultats[strategie]
 
-t_sel = float(df["time"].iloc[instant]) if "time" in df.columns else float(instant)
 speed = float(df["speed"].iloc[instant]) if "speed" in df.columns else 0.0
 accel = float(df["hasAcceleration"].iloc[instant]) if "hasAcceleration" in df.columns else 0.0
 p_dem = float(df["hasPower"].iloc[instant])

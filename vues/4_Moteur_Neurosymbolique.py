@@ -12,13 +12,10 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 
-from ems_core import (
-    alpha_fuzzy_calc,
-    compute_symbolic_states,
-    V_EB_PACK_NOM,
-)
+from ems_core import alpha_fuzzy_calc
 from core.resultats import assurer_donnees_session, nom_affichage
 from core import ontology_explainer as ox
+from core.instant import choisir_instant
 from core.navigation import pied_navigation
 
 
@@ -26,19 +23,6 @@ from core.navigation import pied_navigation
 C_EB = "#3B82F6"
 C_PB = "#22C55E"
 C_GRIS = "#94A3B8"
-
-
-
-LIB_ETATS = {
-    "high_power_demand": "Forte demande de puissance",
-    "regenerative_braking": "Freinage régénératif",
-    "zero_power_demand": "Demande quasi nulle",
-    "converter_risk": "Convertisseur proche de sa limite",
-    "EB_available": "Batterie Énergie disponible",
-    "PB_available": "Batterie Puissance disponible",
-    "EB_low_SOC": "SOC batterie Énergie faible",
-    "PB_low_SOC": "SOC batterie Puissance faible",
-}
 
 
 def _alpha_fuzzy(soc_eb, soc_pb, p_dem, accel):
@@ -81,19 +65,11 @@ n = min([len(df)] + [len(tr["P_EB"]) for tr in resultats.values()])
 # tout le reste de la page.
 
 col_i, col_s = st.columns([2, 1])
-with col_i:
-    if "time" in df.columns and n > 1:
-        _t = df["time"].to_numpy()[:n]
-        t_min, t_max = int(_t[0]), int(_t[-1])
-        t_choisi = st.slider("Instant du cycle (s)", t_min, t_max, int((t_min + t_max) // 2))
-        instant = int(np.abs(_t - t_choisi).argmin())
-    else:
-        instant = st.slider("Échantillon", 0, n - 1, n // 2)
+instant, t_sel = choisir_instant(df, n, col_i)
 with col_s:
     strategie = st.selectbox("Stratégie analysée", noms, format_func=nom_affichage)
 
 ligne = df.iloc[instant]
-t_sel = float(ligne["time"]) if "time" in df.columns else float(instant)
 speed_kmh = (float(ligne["speed"]) * 3.6) if "speed" in df.columns else 0.0
 accel = float(ligne["hasAcceleration"]) if "hasAcceleration" in df.columns else 0.0
 p_dem = float(ligne["hasPower"])
@@ -101,18 +77,14 @@ p_dem = float(ligne["hasPower"])
 tr_sel = resultats[strategie]
 soc_eb_sel = float(tr_sel["SOC_EB"][instant])
 soc_pb_sel = float(tr_sel["SOC_PB"][instant])
-i_eb_sel = float(tr_sel["I_EB"][instant])
 alpha_final = float(tr_sel["alpha_final"][instant])
 alpha_req = float(tr_sel["alpha_requested"][instant]) if "alpha_requested" in tr_sel else alpha_final
 corr_sel = bool(tr_sel["correction_applied"][instant]) if "correction_applied" in tr_sel else False
 
-# Source UNIQUE des états symboliques : celle que les modèles consomment.
-etats = compute_symbolic_states(p_dem, soc_eb_sel, soc_pb_sel, p_eb=i_eb_sel * V_EB_PACK_NOM)
-etats_actifs = [LIB_ETATS[k] for k in LIB_ETATS if etats.get(k)]
-
-# État de fonctionnement inféré par l'ontologie (remplace l'ancien _scenario).
-interp = ox.interpretation_ontologique(p_dem, soc_eb_sel, soc_pb_sel)
-etat_op = ox.ETATS_ONTOLOGIE[interp["etat"]]
+# Source unique de l'état, partagée avec les autres pages.
+etat = ox.etat_instant(p_dem, soc_eb_sel, soc_pb_sel, p_eb=float(tr_sel["P_EB"][instant]))
+etats_actifs = [lib for k, lib in ox.LIBELLES_SYMBOLIQUES.items() if etat["symboliques"].get(k)]
+etat_op = etat["libelle"]
 
 
 # Situation du véhicule (texte en caption, pas en st.metric qui tronque)
@@ -124,7 +96,7 @@ c2.metric("Puissance demandée", f"{p_dem / 1000:.1f} kW")
 c3.metric("Accélération", f"{accel:+.1f} m/s²")
 st.caption(
     f"Instant : t = {t_sel:.0f} s.  ·  État de fonctionnement inféré par l'ontologie : "
-    f"**{etat_op}** (`{interp['etat']}`), sur les états de charge de {nom_affichage(strategie)}."
+    f"**{etat_op}** (`{etat['fonctionnement']}`), sur les états de charge de {nom_affichage(strategie)}."
 )
 
 
