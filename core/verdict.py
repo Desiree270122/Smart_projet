@@ -2,15 +2,17 @@
 core/verdict.py — Désigner le meilleur modèle en tenant compte de tous les critères.
 
 Protocole de comparaison : mêmes conditions pour toutes les stratégies (même
-cycle, mêmes batteries, même convertisseur, même filtre), puis sept métriques.
+cycle, mêmes batteries, même convertisseur, même filtre), puis huit métriques.
 
 - M5 respect des contraintes et M6 suivi de puissance sont ÉLIMINATOIRES : une
   stratégie qui viole les limites ou ne fournit pas la puissance demandée
   paraîtrait sinon plus sobre (M1) et plus efficace (M2) qu'elle ne l'est.
 - M1 énergie consommée, M2 rendement du HESS, M3 équilibrage des SOC, M4 pertes
-  du convertisseur et M7 sollicitation des batteries (durée de vie) départagent
-  les stratégies restantes. M7 n'était pas dans la proposition initiale à six
-  métriques : sans lui, le protocole favoriserait les stratégies qui usent la PB.
+  du convertisseur et M8 sollicitation des batteries (durée de vie) départagent
+  les stratégies restantes. M8 n'était pas dans la proposition initiale : sans
+  lui, le protocole favoriserait les stratégies qui usent la PB.
+- M7 explicabilité : transparence et traçabilité (déclarées par architecture),
+  cohérence physique des décisions (mesurée par core/xai.py).
 
 Le verdict ne fusionne pas les métriques en un score arbitraire ; il suit
 quatre étapes d'aide à la décision multicritère :
@@ -23,7 +25,6 @@ quatre étapes d'aide à la décision multicritère :
 
 import numpy as np
 
-from core.resultats import EXPLICABILITE
 
 
 def _c(cle, libelle, objectif, sens, seuil, relatif, justification, unite="", echelle=1.0, fmt="{:.1f}"):
@@ -33,7 +34,7 @@ def _c(cle, libelle, objectif, sens, seuil, relatif, justification, unite="", ec
     }
 
 
-# Métriques principales du protocole (M1 à M4, M7).
+# Métriques principales du protocole (M1 à M4, M8).
 CRITERES_PRINCIPAUX = [
     _c("energie_km_wh", "M1 · Énergie consommée", "Rendement global", "min", 0.01, True,
        "1 % (énergie tirée des batteries, pertes estimées comprises)", "Wh/km"),
@@ -43,8 +44,8 @@ CRITERES_PRINCIPAUX = [
        "1 point de SOC (écart quadratique moyen entre SOC_EB et SOC_PB)", "pts", 100.0),
     _c("pertes_convertisseur_wh", "M4 · Pertes du convertisseur", "Pertes du convertisseur", "min", 0.05, True,
        "5 % (pertes estimées avec un rendement constant)", "Wh", 1.0, "{:.0f}"),
-    _c("i_eb_rms", "M7 · Courant efficace EB", "Durée de vie", "min", 0.5, False, "0,5 A", "A"),
-    _c("i_pb_rms", "M7 · Courant efficace PB", "Durée de vie", "min", 0.5, False, "0,5 A", "A"),
+    _c("i_eb_rms", "M8 · Courant efficace EB", "Durée de vie", "min", 0.5, False, "0,5 A", "A"),
+    _c("i_pb_rms", "M8 · Courant efficace PB", "Durée de vie", "min", 0.5, False, "0,5 A", "A"),
 ]
 
 # Critères complémentaires, proposés en option.
@@ -57,10 +58,15 @@ CRITERES_COMPLEMENTAIRES = [
     _c("soc_pb_final", "SOC final PB", "Préservation des batteries", "max", 0.01, False, "1 point de SOC", "%", 100.0),
 ]
 
-CRITERE_EXPLICABILITE = _c(
-    "explicabilite", "Explicabilité (déclarée)", "Explicabilité", "max", 0.5, False,
-    "un niveau d'écart (niveau déclaré, non mesuré)", "", 1.0, "{:.0f}",
-)
+# M7 — Explicabilité : E1 transparence et E2 traçabilité (propriétés de
+# l'architecture, déclarées) ; E3 cohérence physique (mesurée par core/xai.py
+# et injectée dans les métriques sous la clé « coherence_physique »).
+CRITERES_EXPLICABILITE = [
+    _c("transparence", "M7a · Transparence et traçabilité (E1, E2)", "Explicabilité", "max", 0.5, False,
+       "un niveau d'écart (directe, décomposable, indirecte) — déclaré", "", 1.0, "{:.0f}"),
+    _c("coherence_physique", "M7b · Cohérence physique (E3)", "Explicabilité", "max", 0.05, False,
+       "5 points de pourcentage d'instants cohérents — mesuré", "%", 100.0, "{:.0f}"),
+]
 
 # Métriques éliminatoires, affichées dans la matrice.
 ELIMINATOIRES = [
@@ -73,8 +79,9 @@ SEUIL_ROBUSTE = 0.70
 
 
 def valeur(metriques, n, cle):
-    if cle == "explicabilite":
-        return float(EXPLICABILITE.get(n, (0, ""))[0])
+    if cle == "transparence":
+        from core.xai import TRANSPARENCE
+        return float(TRANSPARENCE.get(n, (0, "", ""))[0])
     return float(metriques[n].get(cle, float("nan")))
 
 

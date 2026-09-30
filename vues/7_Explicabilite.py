@@ -12,37 +12,27 @@ import streamlit as st
 
 from ems_core import (
     alpha_fuzzy_calc,
-    compute_symbolic_states,
     construire_graphe_instant,
-    load_mlp_simple,
-    load_lstm_seul,
-    load_lstm_neurosymbolic,
     load_gnn_simple,
     charger_scaler,
-    appliquer_scaler,
     FUZZY_RULE_NAMES,
     RULE_LABELS_FR,
-    MLP_INPUT_COLS,
     MLP_NS_INPUT_COLS,
     MLP_NS_MAX_DELTA,
-    MLP_SCALER_FILE,
-    LSTM_FEATURE_COLS,
     LSTM_NS_FEATURE_COLS,
     LSTM_WINDOW,
-    LSTM_SCALER_FILE,
-    LSTM_NS_SCALER_FILE,
     GNN_SCALER_FILE,
     GNN_NODE_NAMES,
     DEVICE,
     ALPHA_GRID_STEP,
     EPS_POWER_W,
-    V_EB_PACK_NOM,
 )
 from core.resultats import assurer_donnees_session, nom_affichage
 from core.navigation import pied_navigation
 from core.instant import choisir_instant
 from core.style import couleur
 from core import ontology_explainer as ox
+from core import xai
 
 
 # Batterie Énergie = bleu, batterie Puissance = vert, comme sur les autres pages.
@@ -51,20 +41,6 @@ C_PB = "#30A46C"
 C_GRIS = "#8B93A7"
 C_REPERE = "#E0A030"
 
-LABELS_FEATURES = {
-    "SOC_EB": "SOC EB",
-    "SOC_PB": "SOC PB",
-    "hasPower": "Puissance demandée",
-    "speed": "Vitesse",
-    "hasAcceleration": "Accélération",
-    "hasTotalForce": "Force totale",
-    "I_EB": "Courant EB",
-    "high_power_demand": "Forte demande (symbolique)",
-    "regenerative_braking": "Freinage (symbolique)",
-    "zero_power_demand": "Demande nulle (symbolique)",
-    "converter_risk": "Convertisseur chargé (symbolique)",
-}
-
 LABELS_NOEUDS = {
     "energy_battery": "Batterie Énergie",
     "power_battery": "Batterie Puissance",
@@ -72,8 +48,6 @@ LABELS_NOEUDS = {
     "motor": "Moteur",
     "vehicle": "Véhicule",
 }
-
-ETATS_SYMBOLIQUES = set(ox.LIBELLES_SYMBOLIQUES)
 
 # Nature de l'explication : exacte quand elle décrit le calcul lui-même,
 # approchée quand elle est reconstruite après coup sur un réseau opaque.
@@ -85,33 +59,32 @@ NATURE = {
         "La décision se décompose exactement en base floue + correction du réseau ; seule "
         "la correction, bornée à ±20 points, vient d'un calcul opaque.",
     ),
-    "EMS_MLP": (False, "Réseau opaque : l'influence des entrées est estimée après coup (gradient × entrée)."),
-    "EMS_LSTM": (False, "Réseau opaque : l'influence des entrées est estimée après coup (gradient × entrée)."),
+    "EMS_MLP": (False, "Réseau opaque : l'explication est reconstruite après coup par valeurs de Shapley exactes."),
+    "EMS_LSTM": (False, "Réseau opaque : l'explication est reconstruite après coup par valeurs de Shapley exactes."),
     "EMS_LSTM_neurosymbolic": (
         False,
-        "Réseau opaque, estimé après coup (gradient × entrée) ; ses entrées symboliques ont "
-        "un sens métier, ce qui rend l'estimation plus lisible.",
+        "Réseau opaque : l'explication est reconstruite après coup par valeurs de Shapley "
+        "exactes ; ses entrées symboliques ont un sens métier, ce qui la rend plus lisible.",
     ),
-    "EMS_GNN": (False, "Réseau opaque : l'influence de chaque composant est estimée après coup (gradient × entrée)."),
+    "EMS_GNN": (False, "Réseau opaque : l'explication est reconstruite après coup par valeurs de Shapley exactes."),
 }
 
 
-# Chargement des modèles (pour les explications approchées)
+# Explications des réseaux et cohérence physique (core/xai.py), mises en cache.
+# La signature (empreinte de la trajectoire) invalide le cache si les données changent.
 
-@st.cache_resource(show_spinner=False)
-def _charger_mlp():
-    modele = load_mlp_simple()
-    modele.eval()
-    return modele, charger_scaler(MLP_SCALER_FILE)
+def _signature(strategie):
+    return float(np.nansum(resultats[strategie]["alpha_final"]))
 
 
-@st.cache_resource(show_spinner=False)
-def _charger_lstm(ns):
-    modele = load_lstm_neurosymbolic() if ns else load_lstm_seul()
-    modele.eval()
-    scaler = charger_scaler(LSTM_NS_SCALER_FILE if ns else LSTM_SCALER_FILE)
-    cols = LSTM_NS_FEATURE_COLS if ns else LSTM_FEATURE_COLS
-    return modele, scaler, list(cols)
+@st.cache_data(show_spinner="Calcul des valeurs de Shapley…")
+def _shapley(strategie, instant, signature):
+    return xai.shapley(strategie, df, resultats[strategie], instant)
+
+
+@st.cache_data(show_spinner="Mesure de la cohérence physique (E3)…")
+def _coherence(strategie, signature):
+    return xai.coherence_physique(strategie, df, resultats[strategie])
 
 
 @st.cache_resource(show_spinner=False)
@@ -120,60 +93,6 @@ def _charger_gnn():
     modele = res[0] if isinstance(res, tuple) else res
     modele.eval()
     return modele, charger_scaler(GNN_SCALER_FILE)
-
-
-def _fenetre_lstm(cols, instant, df, traj):
-    """Reconstruit la fenêtre temporelle (LSTM_WINDOW pas) vue par le LSTM."""
-    idx = [max(0, instant - LSTM_WINDOW + 1 + k) for k in range(LSTM_WINDOW)]
-
-    def valeurs(col):
-        if col in ("SOC_EB", "SOC_PB", "I_EB"):
-            return np.asarray(traj[col], dtype=float)[idx]
-        if col in ETATS_SYMBOLIQUES:
-            return np.asarray(
-                [
-                    float(
-                        compute_symbolic_states(
-                            float(df["hasPower"].iloc[j]), float(traj["SOC_EB"][j]),
-                            float(traj["SOC_PB"][j]), p_eb=float(traj["I_EB"][j]) * V_EB_PACK_NOM,
-                        )[col]
-                    )
-                    for j in idx
-                ],
-                dtype=float,
-            )
-        return df[col].to_numpy(dtype=float)[idx]
-
-    return np.stack([valeurs(c) for c in cols], axis=1).astype(np.float32)
-
-
-def _attribution_lstm(strategie, instant, df, traj):
-    """Importance de chaque entrée pour la variation de SOC de la PB prédite,
-    dont l'application déduit alpha (|gradient × entrée| sommé sur la fenêtre)."""
-    modele, scaler, cols = _charger_lstm(strategie == "EMS_LSTM_neurosymbolic")
-    fen = _fenetre_lstm(cols, instant, df, traj)
-    if scaler is not None:
-        for k in range(fen.shape[0]):
-            try:
-                fen[k, :] = appliquer_scaler(fen[k, :], scaler)
-            except Exception:  # noqa: BLE001
-                pass
-    x = torch.tensor(fen[None, ...], dtype=torch.float32, device=DEVICE, requires_grad=True)
-    with torch.backends.cudnn.flags(enabled=False):
-        sortie = modele(x)
-        sortie[..., 2].sum().backward()
-    return cols, np.abs(x.grad[0].cpu().numpy() * fen).sum(axis=0)
-
-
-def _attribution_mlp(soc_eb, soc_pb, p_dem, speed, accel):
-    """Contribution signée de chaque entrée à alpha (gradient × entrée)."""
-    modele, scaler = _charger_mlp()
-    vals = {"SOC_EB": soc_eb, "SOC_PB": soc_pb, "hasPower": p_dem, "speed": speed, "hasAcceleration": accel}
-    brut = np.array([vals[c] for c in MLP_INPUT_COLS], dtype=np.float64)
-    brut_s = np.asarray(appliquer_scaler(brut, scaler) if scaler is not None else brut, dtype=float)
-    x = torch.tensor([brut_s.tolist()], dtype=torch.float32, device=DEVICE, requires_grad=True)
-    modele(x).sum().backward()
-    return x.grad[0].cpu().numpy() * brut_s
 
 
 def _attribution_gnn(p_dem, soc_eb, soc_pb, accel):
@@ -392,7 +311,18 @@ with tab_instant:
         elif strategie == "EMS_power_limitation":
             etapes = [("Règle physique", alpha_req), ("Filtre de sécurité", alpha_final - alpha_req)]
         else:
-            etapes = [("Sortie du réseau", alpha_req), ("Filtre de sécurité", alpha_final - alpha_req)]
+            # Réseau opaque : valeurs de Shapley exactes, par rapport à une situation
+            # moyenne du cycle. Référence + contributions = décision du réseau.
+            ref_shap, contribs, alpha_explique = _shapley(strategie, instant, _signature(strategie))
+            principales = sorted(contribs, key=lambda kv: -abs(kv[1]))
+            reste = sum(v for _, v in principales[6:])
+            etapes = (
+                [("Référence (situation moyenne)", ref_shap)]
+                + [(xai.LIBELLES_ENTREES.get(c, c), v) for c, v in principales[:6] if abs(v) >= 5e-4]
+                + ([("Autres entrées", reste)] if abs(reste) >= 5e-4 else [])
+                + ([("Écart de reconstitution", alpha_req - alpha_explique)] if abs(alpha_req - alpha_explique) > 1e-3 else [])
+                + [("Filtre de sécurité", alpha_final - alpha_req)]
+            )
         st.plotly_chart(_cascade(etapes, alpha_final), width="stretch")
         st.caption("Vert : pousse vers la batterie Puissance ; bleu : vers la batterie Énergie.")
 
@@ -449,51 +379,41 @@ with tab_instant:
                     f"(±{MLP_NS_MAX_DELTA * 100:.0f} points)."
                 )
 
-        elif strategie == "EMS_MLP":
-            contrib = _attribution_mlp(soc_eb, soc_pb, p_dem, speed, accel)
-            labels = [LABELS_FEATURES.get(c, c) for c in MLP_INPUT_COLS]
-            ordre = list(np.argsort(np.abs(contrib))[::-1])
-            st.plotly_chart(
-                _barres_h(
-                    [labels[i] for i in ordre], [contrib[i] for i in ordre],
-                    [C_PB if contrib[i] >= 0 else C_EB for i in ordre],
-                    "Contribution à alpha (gradient × entrée)", "%{y} : %{x:+.3f}<extra></extra>",
-                ),
-                width="stretch",
-            )
-            st.caption("Vert : pousse vers plus de PB ; bleu : vers plus d'EB.")
-            st.info(ox.expliquer_importances(labels, contrib))
-
-        elif strategie in ("EMS_LSTM", "EMS_LSTM_neurosymbolic"):
-            cols, imp = _attribution_lstm(strategie, instant, df, traj)
-            pct = imp / imp.sum() * 100.0 if imp.sum() > 0 else imp
-            labels = [LABELS_FEATURES.get(c, c) for c in cols]
-            ordre = list(np.argsort(pct)[::-1])
-            st.plotly_chart(
-                _barres_h(
-                    [labels[i] for i in ordre], [pct[i] for i in ordre],
-                    [C_REPERE if cols[i] in ETATS_SYMBOLIQUES else C_GRIS for i in ordre],
-                    f"Importance sur les {LSTM_WINDOW} dernières secondes (%)",
-                    "%{y} : %{x:.0f} %<extra></extra>",
-                ),
-                width="stretch",
-            )
-            st.info(ox.expliquer_importances(labels, imp))
-            if strategie == "EMS_LSTM_neurosymbolic":
-                part_symb = sum(pct[i] for i, c in enumerate(cols) if c in ETATS_SYMBOLIQUES)
+        elif strategie in xai.SHAPLEY_DISPONIBLE:
+            fortes = [(xai.LIBELLES_ENTREES.get(c, c), v) for c, v in principales[:2] if abs(v) >= 5e-4]
+            if fortes:
                 st.markdown(
-                    f"Les quatre entrées symboliques de l'ontologie (en orange) pèsent "
-                    f"**{part_symb:.0f} %** de l'influence à cet instant."
+                    f"Dans une situation moyenne du cycle, le réseau confierait "
+                    f"**{ref_shap * 100:.1f} %** à la PB. À cet instant, "
+                    + " ; ".join(
+                        f"**{lib}** {'augmente' if v > 0 else 'réduit'} cette part de {abs(v) * 100:.1f} points"
+                        for lib, v in fortes
+                    )
+                    + "."
+                )
+            if strategie == "EMS_LSTM_neurosymbolic":
+                total = sum(abs(v) for _, v in contribs)
+                symb = sum(abs(v) for c, v in contribs if c in xai.ETATS_SYMBOLIQUES)
+                st.markdown(
+                    f"Les quatre états symboliques de l'ontologie pèsent **{symb / total * 100:.0f} %** "
+                    "de l'explication à cet instant." if total > 0 else ""
+                )
+            if strategie in ("EMS_LSTM", "EMS_LSTM_neurosymbolic"):
+                st.caption(
+                    f"Chaque entrée compte pour tout son historique sur les {LSTM_WINDOW} dernières "
+                    "secondes vues par le réseau."
                 )
             st.caption(
-                "Influence sur la variation de SOC de la PB prédite par le réseau, dont "
-                "l'application déduit alpha."
+                "Valeurs de Shapley exactes : le réseau est évalué sur toutes les combinaisons "
+                "d'entrées, une entrée absente prenant sa valeur moyenne sur le cycle (état "
+                "inactif pour un état symbolique). La référence plus les contributions redonnent "
+                "exactement la décision du réseau."
             )
-
-        elif strategie == "EMS_GNN":
-            pct_g, edge = _attribution_gnn(p_dem, soc_eb, soc_pb, accel)
-            st.plotly_chart(_graphe_gnn(pct_g, edge), width="stretch")
-            st.info(ox.expliquer_importances([LABELS_NOEUDS.get(nm, nm) for nm in GNN_NODE_NAMES], pct_g))
+            if strategie == "EMS_GNN":
+                with st.expander("Lecture par composant du graphe (gradient × entrée)"):
+                    pct_g, edge = _attribution_gnn(p_dem, soc_eb, soc_pb, accel)
+                    st.plotly_chart(_graphe_gnn(pct_g, edge), width="stretch")
+                    st.caption("Estimation locale approchée : importance de chaque nœud du graphe du HESS.")
 
     # 4 — Ce qu'en dit l'ontologie
 
@@ -641,11 +561,16 @@ with tab_cycle:
     ecart_onto = np.abs(cy["a_fin"][m] - cy["alpha_onto"][m])
 
     st.subheader("Indicateurs d'explicabilité")
-    k1, k2, k3 = st.columns(3)
+    e3, e3_detail = _coherence(strategie, _signature(strategie))
+    k1, k2, k3, k4 = st.columns(4)
     k1.metric("Explication", "exacte" if exacte else "approchée")
-    k2.metric("Accord avec la règle de l'ontologie", f"{np.mean(ecart_onto < 0.05) * 100:.0f} %")
-    k3.metric("Décisions corrigées par le filtre", f"{np.mean(cy['corr'][cy['actif']]) * 100:.1f} %")
+    k2.metric("Cohérence physique (E3)", f"{e3 * 100:.0f} %")
+    k3.metric("Accord avec la règle de l'ontologie", f"{np.mean(ecart_onto < 0.05) * 100:.0f} %")
+    k4.metric("Décisions corrigées par le filtre", f"{np.mean(cy['corr'][cy['actif']]) * 100:.1f} %")
     st.caption(
+        f"Cohérence physique : part de {120} instants de traction où la décision varie dans le "
+        "sens attendu quand on augmente le SOC d'une batterie ou la demande "
+        + " (" + " ; ".join(f"{k} : {v * 100:.0f} %" for k, v in e3_detail.items()) + "). "
         "Accord avec la règle de l'ontologie : part des instants où la décision reste à moins "
         f"de 5 points de la répartition prescrite par OntoHESS (écart moyen : "
         f"{np.mean(ecart_onto) * 100:.1f} points)."

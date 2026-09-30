@@ -17,6 +17,7 @@ from core.resultats import (
 )
 from core.style import couleur
 from core import verdict as vd
+from core import xai
 import numpy as np
 
 
@@ -78,7 +79,19 @@ def _rang_txt(rang):
 @st.cache_data(show_spinner="Chargement des résultats précalculés…")
 def _charger():
     donnees = charger_reference()
-    return donnees["meta"], calculer_metriques(donnees), donnees["resultats"]
+    return donnees["meta"], calculer_metriques(donnees), donnees["resultats"], donnees["cycle_df"]
+
+
+xai_n_instants = 120
+
+
+@st.cache_data(show_spinner="Mesure de la cohérence physique des décisions (E3)…")
+def _coherences(_resultats, _cycle_df, signature):
+    """E3 pour chaque stratégie ; signature : empreinte des trajectoires (clé du cache)."""
+    return {
+        n: xai.coherence_physique(n, _cycle_df, traj, n_instants=xai_n_instants)
+        for n, traj in _resultats.items()
+    }
 
 
 st.title("⚖️ Comparer les méthodes")
@@ -88,7 +101,7 @@ st.caption(
 )
 
 try:
-    meta, metriques, resultats = _charger()
+    meta, metriques, resultats, cycle_df = _charger()
 except FileNotFoundError as exc:
     st.error(str(exc))
     st.info("Cette page lit un résultat calculé hors-ligne. Lancez une fois :\n\n"
@@ -164,7 +177,10 @@ with tab_verdict:
             "- **M5 · Respect des contraintes** : nombre de pas où une limite de SOC ou de courant est dépassée.\n"
             "- **M6 · Suivi de puissance** : écart quadratique moyen entre puissance fournie et "
             "demandée en traction.\n"
-            "- **M7 · Sollicitation des batteries** : courant efficace de chaque batterie, lié à "
+            "- **M7 · Explicabilité** : E1 transparence et E2 traçabilité de la décision "
+            "(propriétés de l'architecture), E3 cohérence physique (mesurée : la décision "
+            "varie-t-elle dans le sens attendu quand le SOC ou la demande changent ?).\n"
+            "- **M8 · Sollicitation des batteries** : courant efficace de chaque batterie, lié à "
             "son vieillissement (objectif « prolonger la durée de vie » du projet)."
         )
         st.latex(
@@ -174,7 +190,7 @@ with tab_verdict:
         st.latex(
             r"M_3 = \sqrt{\tfrac{1}{N}\textstyle\sum_k \big(SOC_{EB}(k) - SOC_{PB}(k)\big)^2}"
             r"\qquad M_6 = \sqrt{\tfrac{1}{N}\textstyle\sum_k \big(P_{HESS}(k) - P_{dem}(k)\big)^2}"
-            r"\qquad M_7 = \sqrt{\tfrac{1}{N}\textstyle\sum_k I(k)^2}"
+            r"\qquad M_8 = \sqrt{\tfrac{1}{N}\textstyle\sum_k I(k)^2}"
         )
         st.caption(
             "Le modèle du HESS étant simulé sans pertes, M1, M2 et M4 utilisent les pertes "
@@ -188,13 +204,54 @@ with tab_verdict:
         "Ajouter les critères complémentaires (corrections du filtre, coût physique, SOC finaux)", value=False,
     )
     inclure_xai = t2.toggle(
-        "Ajouter l'explicabilité (niveau déclaré par modèle, non mesuré)", value=False,
+        "Ajouter M7 · Explicabilité (E1, E2 déclarées ; E3 mesurée, ≈ 30 s au premier calcul)", value=False,
     )
     criteres_v = (
         vd.CRITERES_PRINCIPAUX
         + (vd.CRITERES_COMPLEMENTAIRES if avec_compl else [])
-        + ([vd.CRITERE_EXPLICABILITE] if inclure_xai else [])
+        + (vd.CRITERES_EXPLICABILITE if inclure_xai else [])
     )
+
+    # M7 — explicabilité : E3 est mesurée puis injectée dans les métriques du verdict.
+    metriques_v = metriques
+    if inclure_xai:
+        coherences = _coherences(resultats, cycle_df, tuple(sorted(
+            (n, float(np.nansum(t["alpha_final"]))) for n, t in resultats.items()
+        )))
+        metriques_v = {n: {**m, "coherence_physique": coherences[n][0]} for n, m in metriques.items()}
+        st.markdown("#### M7 · Explicabilité")
+        st.caption(
+            "E1 et E2 décrivent la forme d'explication que permet l'architecture ; E3 mesure, "
+            f"sur {xai_n_instants} instants de traction, si la décision varie dans le sens "
+            "attendu par la physique du HESS (voir le détail)."
+        )
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Stratégie": nom_affichage(n),
+                        "E1 · Transparence": xai.TRANSPARENCE.get(n, (0, "—", "—"))[1],
+                        "E2 · Traçabilité": xai.TRANSPARENCE.get(n, (0, "—", "—"))[2],
+                        "E3 · Cohérence physique": f"{coherences[n][0] * 100:.0f} %",
+                    }
+                    for n in noms
+                ]
+            ).set_index("Stratégie"),
+            width="stretch",
+        )
+        with st.expander("Détail de E3, contrainte par contrainte"):
+            st.dataframe(
+                pd.DataFrame(
+                    {nom_affichage(n): {k: f"{v * 100:.0f} %" for k, v in coherences[n][1].items()} for n in noms}
+                ).T,
+                width="stretch",
+            )
+            st.caption(
+                "Chaque contrainte augmente une grandeur (SOC de +5 points, demande de +1 kW) "
+                "et vérifie que la puissance confiée à la PB évolue dans le sens attendu, à 1 % "
+                "de la demande près. Les modèles sont évalués sur leurs vraies entrées, "
+                "reconstituées à l'identique de la simulation."
+            )
 
     # Étape 1 — critères éliminatoires
     retenues, exclues = vd.eliminer(metriques)
@@ -218,7 +275,7 @@ with tab_verdict:
             "critères et meilleure sur au moins un : elle l'emporte quelle que soit "
             "l'importance donnée à chaque critère."
         )
-        dom = vd.dominances(metriques, retenues, criteres_v)
+        dom = vd.dominances(metriques_v, retenues, criteres_v)
         for a, b in dom:
             st.markdown(f"- **{nom_affichage(a)}** domine **{nom_affichage(b)}**.")
         non_dominees = [n for n in retenues if n not in {b for _, b in dom}]
@@ -234,7 +291,7 @@ with tab_verdict:
             "que celle de la colonne, puis moins bonne. Un écart plus petit que le seuil "
             "d'indifférence du critère compte comme une égalité."
         )
-        paires = vd.bilan_paires(metriques, retenues, criteres_v)
+        paires = vd.bilan_paires(metriques_v, retenues, criteres_v)
         st.dataframe(
             pd.DataFrame(
                 {
@@ -292,7 +349,7 @@ with tab_verdict:
                 ],
                 dtype=float,
             )
-        flux = vd.flux_par_critere(metriques, retenues, criteres_v)
+        flux = vd.flux_par_critere(metriques_v, retenues, criteres_v)
         scores = flux @ poids / poids.sum() if poids.sum() > 0 else flux.mean(axis=1)
         premiers, rang_moyen = vd.robustesse(flux)
 
