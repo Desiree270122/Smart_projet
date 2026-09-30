@@ -27,6 +27,22 @@ PALETTE = {
 COULEUR_NEUTRE = "#7A828E"
 
 
+# Grandeurs physiques : une couleur = une signification, sur toutes les pages.
+# Validé sur fond sombre : les couleurs d'un même graphique restent distinctes,
+# y compris pour un lecteur daltonien. Deux règles d'usage :
+# - la palette des stratégies (ci-dessus) et celle des grandeurs ne se mélangent
+#   jamais dans un même graphique ;
+# - le bleu (demande) et le violet (décision) ne figurent pas ensemble.
+COULEUR_DEMANDE = "#5B8DEF"        # demande de puissance, véhicule
+COULEUR_EB = "#3DBE7A"             # batterie Énergie (batterie 1)
+COULEUR_PB = "#F0913A"             # batterie Puissance (batterie 2)
+COULEUR_CONVERTISSEUR = "#D66BC8"
+COULEUR_DECISION = "#A98BF5"       # décision de l'EMS (alpha)
+COULEUR_VIOLATION = "#EF5350"
+COULEUR_REFERENCE = "#C5CAD3"      # référence : règle de l'ontologie, situation moyenne
+COULEUR_SECONDAIRE = "#8B93A7"     # repère secondaire (base floue, arêtes, axes)
+
+
 def couleur(cle: str) -> str:
     """Couleur d'une stratégie à partir de sa clé interne."""
     return PALETTE.get(cle, COULEUR_NEUTRE)

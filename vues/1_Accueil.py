@@ -1,342 +1,243 @@
-from datetime import date
+"""
+Tableau de bord : comprendre en quelques secondes ce qui se passe dans le HESS
+pour un modèle de gestion d'énergie choisi — état du système, répartition de la
+puissance, respect des contraintes — avec une synthèse rédigée.
+"""
 
+import sys
+from pathlib import Path
+
+DOSSIER_PROJET = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(DOSSIER_PROJET))
+
+import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
 import ems_core as core
-from core.resultats import charger_reference
-
-
-# Palette de la charte.
-C_BLEU = "#3B82F6"
-C_VERT = "#22C55E"
-C_ORANGE = "#F59E0B"
-C_GRIS = "#6B7280"
-C_ARDOISE = "#334155"
+from core.resultats import assurer_donnees_session, calculer_metriques, nom_affichage
+from core.style import (
+    COULEUR_CONVERTISSEUR,
+    COULEUR_DECISION,
+    COULEUR_DEMANDE,
+    COULEUR_EB,
+    COULEUR_PB,
+    COULEUR_SECONDAIRE,
+    COULEUR_VIOLATION,
+)
 
 
 st.markdown(
     """
     <style>
-    .s2-topbar{display:flex;justify-content:space-between;align-items:center;
-      padding:.55rem .95rem;border:1px solid rgba(128,128,128,.25);border-radius:10px;
-      font-size:.82rem;color:#8B93A7;margin-bottom:1.1rem;flex-wrap:wrap;gap:6px}
-    .s2-topbar b{color:#3B82F6}
-    .s2-hero-title{font-size:3.2rem;font-weight:800;letter-spacing:-1px;line-height:1;
-      color:#3B82F6;background:linear-gradient(90deg,#3B82F6,#22C55E);
-      -webkit-background-clip:text;-webkit-text-fill-color:transparent;margin:0}
-    .s2-hero-claim{font-size:1.3rem;color:#CBD5E1;margin:.6rem 0 .35rem;font-weight:600;line-height:1.35}
-    .s2-hero-tags{font-size:.95rem;color:#3B82F6;font-weight:700;letter-spacing:.6px}
-    .s2-kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:.2rem 0}
-    .s2-kpi{border:1px solid rgba(128,128,128,.22);border-radius:14px;padding:16px 18px;
-      background:rgba(127,127,127,.06)}
-    .s2-kpi .n{font-size:2rem;font-weight:800;line-height:1}
-    .s2-kpi .l{font-size:.85rem;color:#94A3B8;margin-top:6px}
-    .s2-pipe{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:.2rem 0 .4rem}
-    .s2-step{border:1px solid rgba(128,128,128,.25);border-radius:10px;padding:8px 13px;
-      font-weight:600;font-size:.9rem;background:rgba(59,130,246,.08)}
-    .s2-arrow{color:#22C55E;font-weight:800;font-size:1.1rem}
-    .s2-card{border:1px solid rgba(128,128,128,.22);border-radius:14px;padding:16px 18px;
-      background:rgba(127,127,127,.05);height:100%}
-    .s2-card .t{font-weight:700;font-size:1rem;margin-bottom:4px}
-    .s2-card .d{color:#94A3B8;font-size:.9rem}
-    @media(max-width:900px){.s2-kpi-grid{grid-template-columns:repeat(2,1fr)}
-      .s2-hero-title{font-size:2.4rem}}
+    .s2-titre{font-size:2.1rem;font-weight:800;letter-spacing:-.5px;margin:0}
+    .s2-accroche{font-size:1.05rem;color:#AEB6C4;margin:.2rem 0 .8rem}
+    .s2-flux{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:.2rem 0 1rem}
+    .s2-etape{border:1px solid;border-radius:9px;padding:6px 11px;font-weight:600;font-size:.88rem}
+    .s2-fleche{color:#8B93A7;font-weight:800}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-
-@st.cache_data(show_spinner=False)
-def _kpis():
-    """KPI réels lus depuis le fichier précalculé, avec repli sûr si absent."""
-    n_pts = 0
-    try:
-        d = charger_reference()
-        strategies = list(d["resultats"].keys())
-        n_pts = int(d["meta"].get("nb_points", 0))
-    except Exception:  # noqa: BLE001
-        strategies = list(core.MODEL_ORDER)
-    n_strat = len(strategies)
-    non_ia = {"EMS_power_limitation", "EMS_fuzzy_logic"}
-    n_ia = sum(1 for s in strategies if s not in non_ia)
-    return n_strat, n_ia, n_pts
-
-
-def _schema_hess():
-    """Schéma du système hybride de stockage (chaîne véhicule -> batteries)."""
-    pos = {
-        "Véhicule": (0.0, 3.0),
-        "Moteur": (0.0, 2.0),
-        "Convertisseur": (0.0, 1.0),
-        "Batterie Énergie": (-1.15, 0.0),
-        "Batterie Puissance": (1.15, 0.0),
-    }
-    couleurs = {
-        "Véhicule": C_ARDOISE,
-        "Moteur": C_ORANGE,
-        "Convertisseur": C_BLEU,
-        "Batterie Énergie": C_BLEU,
-        "Batterie Puissance": C_VERT,
-    }
-    aretes = [
-        ("Véhicule", "Moteur"),
-        ("Moteur", "Convertisseur"),
-        ("Convertisseur", "Batterie Énergie"),
-        ("Convertisseur", "Batterie Puissance"),
-    ]
-
-    edge_x, edge_y = [], []
-    for a, b in aretes:
-        edge_x += [pos[a][0], pos[b][0], None]
-        edge_y += [pos[a][1], pos[b][1], None]
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=edge_x, y=edge_y, mode="lines", line=dict(color="#C7CCD6", width=2), hoverinfo="skip"))
-    fig.add_trace(
-        go.Scatter(
-            x=[p[0] for p in pos.values()],
-            y=[p[1] for p in pos.values()],
-            mode="markers+text",
-            marker=dict(size=42, color=list(couleurs.values()), line=dict(color="white", width=2)),
-            text=list(pos.keys()),
-            textposition="middle right",
-            textfont=dict(size=12),
-            hoverinfo="text",
-        )
-    )
-    fig.update_layout(
-        height=360,
-        showlegend=False,
-        margin=dict(t=10, b=10, l=10, r=10),
-        xaxis=dict(visible=False, range=[-2.0, 3.2]),
-        yaxis=dict(visible=False, range=[-0.6, 3.4]),
-    )
-    return fig
-
-
-# Barre supérieure
-
+st.markdown("<div class='s2-titre'>2SMART · Gestion d'énergie d'un HESS</div>", unsafe_allow_html=True)
 st.markdown(
-    f"""
-    <div class="s2-topbar">
-      <span><b>2SMART</b> &nbsp;·&nbsp; Plateforme HESS</span>
-      <span>Version 2.0 &nbsp;·&nbsp; Exécution {str(core.DEVICE).upper()} &nbsp;·&nbsp; {date.today().isoformat()}</span>
-    </div>
-    """,
+    "<div class='s2-accroche'>Deux batteries complémentaires, une décision à chaque seconde : "
+    "quelle part de la puissance confier à chacune ? L'application simule, compare et "
+    "explique cette décision pour sept stratégies.</div>",
     unsafe_allow_html=True,
 )
 
 
-# Hero — une phrase qui donne immédiatement le sens du projet
+def _etape(texte, couleur):
+    return f"<span class='s2-etape' style='border-color:{couleur};color:{couleur}'>{texte}</span>"
 
-hero_g, hero_d = st.columns([1.25, 1])
-with hero_g:
-    st.markdown(
-        """
-        <div class="s2-hero-title">2SMART</div>
-        <div class="s2-hero-claim">Répartir l'énergie entre les deux batteries d'un système
-        de stockage hybride, avec une IA explicable.</div>
-        <div class="s2-hero-tags">Simuler &nbsp;·&nbsp; Comparer &nbsp;·&nbsp; Expliquer</div>
-        """,
-        unsafe_allow_html=True,
+
+_fleche = "<span class='s2-fleche'>&#8594;</span>"
+st.markdown(
+    "<div class='s2-flux'>"
+    + _fleche.join(
+        [
+            _etape("Demande du véhicule", COULEUR_DEMANDE),
+            _etape("EMS : décision alpha", COULEUR_DECISION),
+            _etape("Batterie Énergie (1 − alpha)", COULEUR_EB) + " " + _etape("Batterie Puissance (alpha)", COULEUR_PB),
+            _etape("Convertisseur en série (EB)", COULEUR_CONVERTISSEUR),
+            _etape("Bus DC et moteur", COULEUR_SECONDAIRE),
+        ]
     )
+    + "</div>",
+    unsafe_allow_html=True,
+)
+
+try:
+    source = assurer_donnees_session(st)
+except FileNotFoundError as exc:
+    st.error(str(exc))
+    st.info("Lancez une fois le précalcul :  `python scripts/run_simulations.py`")
+    st.stop()
+
+resultats = st.session_state.get("resultats_simulation")
+df = st.session_state.get("cycle_pret")
+if not resultats or df is None:
+    st.warning("Aucune donnée disponible.")
+    st.stop()
+
+
+# Choix du modèle et du cycle
+
+noms = list(resultats.keys())
+c_mod, c_cyc, c_btn = st.columns([2, 2, 1])
+strategie = c_mod.selectbox(
+    "Modèle EMS", noms,
+    index=noms.index("EMS_power_limitation") if "EMS_power_limitation" in noms else 0,
+    format_func=nom_affichage,
+)
+cycle = (
+    "Artemis urbain + routier, répété 7 fois (référence)"
+    if source == "référence précalculée" else "Cycle personnalisé (simulation de la session)"
+)
+c_cyc.selectbox("Cycle de conduite", [cycle], help="Pour un autre cycle, lancez une simulation.")
+with c_btn:
     st.write("")
-    b1, b2 = st.columns(2)
-    with b1:
-        if st.button("🚀 Explorer une démonstration", type="primary", width="stretch"):
-            st.switch_page("vues/5_Comparaison_des_strategies.py")
-    with b2:
-        if st.button("🧪 Nouvelle simulation", width="stretch"):
-            st.switch_page("vues/8_Simulation_cycle_personnalise.py")
-
-with hero_d:
-    st.plotly_chart(_schema_hess(), width="stretch")
-
-
-# Le système, composant par composant (interactif)
-
-st.caption("Cliquez sur un composant pour comprendre son rôle dans le système.")
-
-comp1, comp2, comp3, comp4 = st.columns(4)
-with comp1:
-    with st.popover("🔋 Batterie Énergie", width="stretch"):
-        st.markdown(
-            "**Batterie Énergie (EB)**\n\n"
-            "- Grande capacité de stockage\n"
-            "- Faible densité de puissance\n"
-            "- Assure l'autonomie du véhicule"
-        )
-with comp2:
-    with st.popover("⚡ Batterie Puissance", width="stretch"):
-        st.markdown(
-            "**Batterie Puissance (PB)**\n\n"
-            "- Très forte puissance instantanée\n"
-            "- Répond aux pics de demande et au freinage\n"
-            "- Protège la batterie Énergie des sollicitations brutales"
-        )
-with comp3:
-    with st.popover("🔄 Convertisseur", width="stretch"):
-        st.markdown(
-            "**Convertisseur**\n\n"
-            "- Placé en série entre les deux batteries, il pilote le courant de la "
-            "batterie Énergie ; la batterie Puissance, sur le bus, fournit le complément\n"
-            "- Il ne traite que la différence de tension entre les batteries, soit environ "
-            "10 % de la puissance de la batterie Énergie : il reste petit et léger"
-        )
-with comp4:
-    with st.popover("🚗 Moteur et véhicule", width="stretch"):
-        st.markdown(
-            "**Moteur et véhicule**\n\n"
-            "- Le cycle de conduite impose à chaque instant une puissance demandée\n"
-            "- En freinage, le moteur renvoie de l'énergie à récupérer"
-        )
-
-
-# KPI, libellés orientés domaine
-
-n_strat, n_ia, n_pts = _kpis()
-pts_txt = f"{n_pts:,}".replace(",", " ") if n_pts else "—"
-
-st.markdown(
-    f"""
-    <div class="s2-kpi-grid">
-      <div class="s2-kpi"><div class="n" style="color:{C_BLEU}">{n_strat}</div><div class="l">Stratégies EMS disponibles</div></div>
-      <div class="s2-kpi"><div class="n" style="color:{C_VERT}">{n_ia}</div><div class="l">Modèles IA évalués</div></div>
-      <div class="s2-kpi"><div class="n" style="color:{C_ORANGE}">{pts_txt}</div><div class="l">Instants de conduite simulés</div></div>
-      <div class="s2-kpi"><div class="n" style="color:{C_VERT}">4</div><div class="l">Familles d'approches comparées</div></div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-
-# Le défi : problème -> difficulté -> réponse
-
-st.subheader("Le défi")
-
-d1, d2, d3 = st.columns(3)
-with d1:
-    st.markdown(
-        f'<div class="s2-card"><div class="t" style="color:{C_BLEU}">Le problème</div>'
-        '<div class="d">Un véhicule électrique équipé de deux batteries complémentaires '
-        'doit décider, à chaque instant, laquelle fournit la puissance demandée.</div></div>',
-        unsafe_allow_html=True,
-    )
-with d2:
-    st.markdown(
-        f'<div class="s2-card"><div class="t" style="color:{C_ORANGE}">Pourquoi c\'est difficile</div>'
-        '<div class="d">Les objectifs sont multiples et contradictoires : autonomie, durée de '
-        'vie, rendement. Les contraintes physiques sont strictes et les cycles de conduite '
-        'très variables.</div></div>',
-        unsafe_allow_html=True,
-    )
-with d3:
-    st.markdown(
-        f'<div class="s2-card"><div class="t" style="color:{C_VERT}">La réponse de 2SMART</div>'
-        '<div class="d">Simuler le système, comparer sept stratégies de gestion d\'énergie, '
-        'et expliquer chaque décision — sous le contrôle d\'un filtre physique de sécurité.</div></div>',
-        unsafe_allow_html=True,
-    )
-
-etapes = ["Cycle", "Prétraitement", "Modèle IA", "Filtre physique", "Simulation", "Explicabilité"]
-pipe = '<div class="s2-pipe">'
-for i, e in enumerate(etapes):
-    pipe += f'<span class="s2-step">{e}</span>'
-    if i < len(etapes) - 1:
-        pipe += '<span class="s2-arrow">&#8594;</span>'
-pipe += "</div>"
-st.markdown(pipe, unsafe_allow_html=True)
-
-
-# Que vais-je obtenir ?
-
-st.subheader("Que vais-je obtenir ?")
-
-benefices = [
-    ("🧪 Simuler", "Observer la répartition de puissance sur un cycle de conduite complet.", C_BLEU),
-    ("📊 Comparer", "Identifier la stratégie la plus performante selon le critère qui vous importe.", C_ORANGE),
-    ("🧠 Expliquer", "Comprendre pourquoi une décision a été prise, à n'importe quel instant.", C_VERT),
-    ("🔋 Évaluer", "Estimer les pertes, le respect des contraintes et la sollicitation de chaque batterie.", C_ARDOISE),
-]
-cols_ben = st.columns(4)
-for col, (titre, desc, coul) in zip(cols_ben, benefices):
-    with col:
-        st.markdown(
-            f'<div class="s2-card"><div class="t" style="color:{coul}">{titre}</div>'
-            f'<div class="d">{desc}</div></div>',
-            unsafe_allow_html=True,
-        )
-
-
-# Valeur scientifique
-
-st.subheader("Pourquoi 2SMART ?")
-
-with st.container(border=True):
-    st.markdown(
-        "- **IA hybride** : connaissances expertes de l'ontologie OntoHESS combinées à "
-        "l'apprentissage, via une approche **neuro-symbolique**\n"
-        "- **Respect des contraintes physiques** garanti par un filtre de sécurité en aval "
-        "de chaque décision\n"
-        "- **Explicabilité** des décisions, adaptée à la nature de chaque modèle\n"
-        "- **Comparaison** de sept stratégies EMS sur des critères communs\n"
-        "- **Validation par simulation** sur un cycle de conduite réel"
-    )
-
-
-# Comprendre la décision (équations repliées)
-
-st.subheader("Comprendre la décision")
-
-st.write(
-    "À chaque instant, une stratégie choisit `alpha(t)` : la fraction de la puissance "
-    "demandée confiée à la batterie de puissance. Tout le reste en découle."
-)
-
-with st.expander("Voir le modèle mathématique"):
-    eq1, eq2 = st.columns(2)
-    with eq1:
-        st.latex(r"P_{PB} = \alpha \times P_{dem}")
-    with eq2:
-        st.latex(r"P_{EB} = (1 - \alpha) \times P_{dem}")
-    st.caption(
-        "alpha = 0 : toute la puissance vient de la batterie Énergie. "
-        "alpha = 1 : toute la puissance vient de la batterie Puissance. "
-        "La décision passe ensuite par le filtre physique de sécurité."
-    )
-
-
-# Que souhaitez-vous faire ?
-
-st.subheader("Que souhaitez-vous faire ?")
-
-mode1, mode2 = st.columns(2)
-with mode1:
-    st.markdown(
-        f'<div class="s2-card"><div class="t" style="color:{C_BLEU}">Explorer une démonstration</div>'
-        '<div class="d">Résultats déjà calculés, affichage instantané. Comparaison, analyse '
-        'et explicabilité des sept stratégies.</div></div>',
-        unsafe_allow_html=True,
-    )
-with mode2:
-    st.markdown(
-        f'<div class="s2-card"><div class="t" style="color:{C_VERT}">Lancer une simulation</div>'
-        '<div class="d">Importer un nouveau cycle de conduite et simuler le système de bout '
-        'en bout. Temps de calcul plus long.</div></div>',
-        unsafe_allow_html=True,
-    )
-
-st.write("")
-
-acces1, acces2, acces3 = st.columns(3)
-with acces1:
-    if st.button("Explorer les résultats", type="primary", width="stretch"):
-        st.switch_page("vues/5_Comparaison_des_strategies.py")
-with acces2:
-    if st.button("Architecture des modèles", width="stretch"):
-        st.switch_page("vues/9_Architecture_des_modeles.py")
-with acces3:
-    if st.button("Préparation des données", width="stretch"):
+    if st.button("▶ Autre cycle", width="stretch", help="Préparer et lancer une simulation sur un autre cycle"):
         st.switch_page("vues/2_Preparation_donnees.py")
+
+traj = resultats[strategie]
+n = min(len(df), len(traj["P_EB"]))
+
+
+@st.cache_data(show_spinner="Calcul des indicateurs…")
+def _indicateurs(strategie, signature):
+    return calculer_metriques({"resultats": {strategie: resultats[strategie]}, "cycle_df": df})[strategie]
+
+
+m = _indicateurs(strategie, float(np.nansum(traj["alpha_final"])))
+p_dem = df["hasPower"].to_numpy(dtype=float)[:n]
+p_eb = np.asarray(traj["P_EB"], dtype=float)[:n]
+p_pb = np.asarray(traj["P_PB"], dtype=float)[:n]
+soc_eb = np.asarray(traj["SOC_EB"], dtype=float)
+soc_pb = np.asarray(traj["SOC_PB"], dtype=float)
+temps_min = (df["time"].to_numpy(dtype=float)[:n] if "time" in df.columns else np.arange(n)) / 60.0
+traction = p_dem > core.EPS_POWER_W
+violations = int(m["nb_violations"] + m["nb_violations_courant"])
+non_fourni = m["energie_non_servie_wh"]
+
+
+# Indicateurs de l'état du système
+
+st.subheader(f"État du système avec {nom_affichage(strategie)}")
+l1 = st.columns(3)
+l1[0].metric("Puissance demandée (max)", f"{p_dem.max() / 1000:.1f} kW",
+             help=f"Moyenne en traction : {p_dem[traction].mean() / 1000:.1f} kW", border=True)
+l1[1].metric("SOC final · batterie Énergie", f"{soc_eb[-1] * 100:.1f} %", border=True)
+l1[2].metric("SOC final · batterie Puissance", f"{soc_pb[-1] * 100:.1f} %", border=True)
+l2 = st.columns(3)
+l2[0].metric("Rendement du HESS (estimé)", f"{m['rendement_hess'] * 100:.2f} %", border=True)
+l2[1].metric("Écart entre les SOC (RMSE)", f"{m['rmse_delta_soc'] * 100:.1f} pts",
+             help=f"Écart maximal : {m['delta_soc_max'] * 100:.1f} points", border=True)
+l2[2].metric(
+    "Contraintes et demande",
+    "✓ respectées" if violations == 0 and non_fourni < 1 else "✗ non respectées",
+    help=f"{violations} violation(s) de SOC ou de courant ; {non_fourni:.0f} Wh de demande non fournie",
+    border=True,
+)
+
+
+# Les deux graphiques clés
+
+st.subheader("Évolution des états de charge")
+fig_soc = go.Figure(
+    [
+        go.Scatter(x=np.arange(len(soc_eb)) * core.DT_SECONDS / 60.0, y=soc_eb * 100, name="Batterie Énergie",
+                   line=dict(color=COULEUR_EB, width=2)),
+        go.Scatter(x=np.arange(len(soc_pb)) * core.DT_SECONDS / 60.0, y=soc_pb * 100, name="Batterie Puissance",
+                   line=dict(color=COULEUR_PB, width=2)),
+    ]
+)
+fig_soc.add_hline(y=core.SOC_EB_MIN * 100, line=dict(color=COULEUR_VIOLATION, dash="dot", width=1),
+                  annotation_text="SOC minimal", annotation_position="bottom right")
+fig_soc.update_layout(
+    height=300, margin=dict(t=10, b=40, l=10, r=10), hovermode="x unified",
+    xaxis_title="Temps (min)", yaxis=dict(title="SOC (%)", range=[0, 102]),
+    legend=dict(orientation="h", y=1.12, x=0),
+)
+st.plotly_chart(fig_soc, width="stretch")
+
+st.subheader("Répartition de la puissance")
+st.caption(
+    "Le véhicule demande une puissance ; l'EMS la répartit entre les deux batteries. "
+    "Faites glisser la réglette sous le graphique pour zoomer sur une portion du cycle."
+)
+fig_p = go.Figure(
+    [
+        go.Scattergl(x=temps_min, y=p_dem / 1000, name="Demande", line=dict(color=COULEUR_DEMANDE, width=1.2)),
+        go.Scattergl(x=temps_min, y=p_eb / 1000, name="Batterie Énergie", line=dict(color=COULEUR_EB, width=1.2)),
+        go.Scattergl(x=temps_min, y=p_pb / 1000, name="Batterie Puissance", line=dict(color=COULEUR_PB, width=1.2)),
+    ]
+)
+fig_p.update_layout(
+    height=380, margin=dict(t=10, b=10, l=10, r=10), hovermode="x unified",
+    yaxis_title="Puissance (kW)",
+    xaxis=dict(title="Temps (min)", rangeslider=dict(visible=True, thickness=0.08), range=[60, 90]),
+    legend=dict(orientation="h", y=1.12, x=0),
+)
+st.plotly_chart(fig_p, width="stretch")
+
+
+# Synthèse rédigée
+
+st.subheader("Analyse de la simulation")
+part_pb = float(np.sum(p_pb[traction])) / float(np.sum(p_dem[traction])) * 100 if traction.any() else 0.0
+temps_pb = float(np.mean(p_pb[traction] > 100.0)) * 100 if traction.any() else 0.0
+distance = float(np.sum(df["speed"].to_numpy(dtype=float)[:n])) * core.DT_SECONDS / 1000 if "speed" in df.columns else float("nan")
+phrases = [
+    f"Sur ce cycle ({n * core.DT_SECONDS / 60:.0f} min, {distance:.0f} km), la demande atteint "
+    f"{p_dem.max() / 1000:.1f} kW en traction et {p_dem.min() / 1000:.1f} kW au freinage.",
+    f"{nom_affichage(strategie)} confie **{part_pb:.0f} %** de l'énergie de traction à la batterie "
+    f"Puissance, qui intervient pendant {temps_pb:.0f} % du temps de traction.",
+    f"L'écart entre les deux SOC atteint au plus **{m['delta_soc_max'] * 100:.1f} points** (écart "
+    f"quadratique moyen {m['rmse_delta_soc'] * 100:.1f} points) ; les SOC finaux sont de "
+    f"{soc_eb[-1] * 100:.1f} % (Énergie) et {soc_pb[-1] * 100:.1f} % (Puissance).",
+    (
+        "Aucune violation de SOC ni de courant, et toute la puissance demandée a été fournie."
+        if violations == 0 and non_fourni < 1
+        else f"**Attention** : {violations} violation(s) de contrainte et {non_fourni:.0f} Wh de "
+        "demande non fournie ; les autres indicateurs de ce modèle sont donc flattés."
+    ),
+    f"Rendement estimé du HESS : **{m['rendement_hess'] * 100:.2f} %** ({m['pertes_totales_wh']:.0f} Wh "
+    f"de pertes estimées, dont {m['pertes_convertisseur_wh']:.0f} Wh dans le convertisseur).",
+]
+with st.container(border=True):
+    st.markdown(" ".join(phrases))
+
+b1, b2, b3 = st.columns(3)
+if b1.button("🔍 Pourquoi ces décisions ?", width="stretch", type="primary"):
+    st.switch_page("vues/7_Explicabilite.py")
+if b2.button("⚖️ Comparer les modèles", width="stretch"):
+    st.switch_page("vues/5_Comparaison_des_strategies.py")
+if b3.button("📈 Simuler un autre cycle", width="stretch"):
+    st.switch_page("vues/2_Preparation_donnees.py")
+
+
+with st.expander("Le projet en bref"):
+    st.markdown(
+        "- **Le problème** : un véhicule électrique équipé de deux batteries complémentaires "
+        "doit décider, à chaque instant, laquelle fournit la puissance demandée.\n"
+        "- **Pourquoi c'est difficile** : les objectifs se contredisent (autonomie, durée de "
+        "vie, rendement), les contraintes physiques sont strictes et les cycles de conduite "
+        "très variables.\n"
+        "- **La réponse de 2SMART** : comparer quatre familles d'approches (règles fixes, "
+        "ontologie seule, apprentissage seul, hybride neuro-symbolique) et expliquer chaque "
+        "décision, sous le contrôle d'un filtre physique de sécurité.\n"
+        "- **L'architecture** : cascade à source de courant contrôlée (Fonseca de Freitas et "
+        "al., IEEE Access 2024) ; le convertisseur, en série, ne traite qu'environ 10 % de la "
+        "puissance de la batterie Énergie."
+    )
+    e1, e2 = st.columns(2)
+    e1.latex(r"P_{PB} = \alpha \times P_{dem}")
+    e2.latex(r"P_{EB} = (1 - \alpha) \times P_{dem}")
+    st.caption(
+        "alpha = 0 : toute la puissance vient de la batterie Énergie ; alpha = 1 : toute la "
+        "puissance vient de la batterie Puissance. La décision passe ensuite par le filtre "
+        "physique de sécurité."
+    )

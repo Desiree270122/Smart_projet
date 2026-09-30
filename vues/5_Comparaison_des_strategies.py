@@ -2,6 +2,7 @@
 
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import streamlit as st
 
 import ems_core as ec
@@ -15,7 +16,7 @@ from core.resultats import (
     FAMILLES,
     PAIRES_SYMBOLIQUE,
 )
-from core.style import couleur
+from core.style import couleur, COULEUR_CONVERTISSEUR, COULEUR_EB, COULEUR_PB
 from core import verdict as vd
 from core import xai
 import numpy as np
@@ -143,27 +144,62 @@ with tab_verdict:
         "celle qu'on préfère."
     )
 
-    # Matrice des métriques du protocole
-    st.markdown("#### Les métriques, stratégie par stratégie")
+    # Matrice des métriques du protocole : critères en lignes, modèles en colonnes
+    st.markdown("#### Les métriques, modèle par modèle")
     _matrice = vd.CRITERES_PRINCIPAUX + vd.ELIMINATOIRES
 
     def _titre(c):
         return c["libelle"] + (" (" + c["unite"] + ")" if c["unite"] else "")
 
-    st.dataframe(
-        pd.DataFrame(
-            [
-                {
-                    "Stratégie": nom_affichage(n),
-                    **{
-                        _titre(c): c["fmt"].format(vd.valeur(metriques, n, c["cle"]) * c["echelle"])
-                        for c in _matrice
-                    },
-                }
-                for n in noms
-            ]
-        ).set_index("Stratégie"),
-        width="stretch",
+    _lignes_m = {
+        _titre(c): {nom_affichage(n): c["fmt"].format(vd.valeur(metriques, n, c["cle"]) * c["echelle"]) for n in noms}
+        for c in _matrice
+    }
+    _lignes_m["M7 · Transparence de la décision (E1)"] = {
+        nom_affichage(n): xai.TRANSPARENCE.get(n, (0, "—"))[1].split(" :")[0] for n in noms
+    }
+    st.dataframe(pd.DataFrame(_lignes_m).T, width="stretch")
+    st.caption(
+        "Aucune couleur de « gagnant » ici : le verdict ci-dessous tient compte des seuils "
+        "d'indifférence et de la robustesse aux pondérations. La cohérence physique (E3) "
+        "s'ajoute avec l'interrupteur « M7 · Explicabilité »."
+    )
+
+    # Comparaison en barres des six métriques du protocole
+    _barres = [
+        ("energie_km_wh", "M1 · Énergie consommée (Wh/km)", 1.0, "{:.1f}"),
+        ("rendement_hess", "M2 · Rendement du HESS (%)", 100.0, "{:.2f}"),
+        ("rmse_delta_soc", "M3 · Écart entre les SOC (pts)", 100.0, "{:.1f}"),
+        ("pertes_convertisseur_wh", "M4 · Pertes du convertisseur (Wh)", 1.0, "{:.0f}"),
+        ("nb_violations", "M5 · Violations de SOC", 1.0, "{:.0f}"),
+        ("rmse_puissance_kw", "M6 · Erreur de suivi de puissance (kW)", 1.0, "{:.2f}"),
+    ]
+    _elimines = set(vd.eliminer(metriques)[1])
+    fig_m = make_subplots(
+        rows=2, cols=3, shared_yaxes=True, horizontal_spacing=0.04, vertical_spacing=0.16,
+        subplot_titles=[b[1] for b in _barres],
+    )
+    for k, (cle_b, _lib, ech, fmt_b) in enumerate(_barres):
+        vals_b = [vd.valeur(metriques, n, cle_b) * ech for n in noms]
+        fig_m.add_trace(
+            go.Bar(
+                y=[nom_affichage(n) for n in noms], x=vals_b, orientation="h",
+                marker=dict(
+                    color=[couleur(n) for n in noms],
+                    opacity=[0.35 if n in _elimines else 1.0 for n in noms],
+                ),
+                text=[fmt_b.format(v) for v in vals_b], textposition="outside", cliponaxis=False,
+                hovertemplate="%{y} : %{x}<extra></extra>", showlegend=False,
+            ),
+            row=k // 3 + 1, col=k % 3 + 1,
+        )
+    fig_m.update_yaxes(autorange="reversed")
+    fig_m.update_layout(height=520, margin=dict(t=40, b=20, l=10, r=40), bargap=0.25)
+    fig_m.update_annotations(font_size=12)
+    st.plotly_chart(fig_m, width="stretch")
+    st.caption(
+        "Barres pâles : stratégies éliminées (M5 ou M6), dont les autres métriques sont flattées "
+        "par la demande qu'elles n'ont pas fournie."
     )
     with st.expander("Définition des métriques"):
         st.markdown(
@@ -668,9 +704,9 @@ with tab_critere:
     ordre_p = sorted(noms, key=lambda n: bilans[n]["total_wh"])
     etiquettes_p = [nom_affichage(n) + ("" if n in classees else " (hors cl.)") for n in ordre_p][::-1]
     COMPOSANTES = (
-        ("eb_wh", "Batterie Énergie (R·I²)", "#5B8DEF"),
-        ("pb_wh", "Batterie Puissance (R·I²)", "#30A46C"),
-        ("convertisseur_wh", "Convertisseur", "#E0A030"),
+        ("eb_wh", "Batterie Énergie (R·I²)", COULEUR_EB),
+        ("pb_wh", "Batterie Puissance (R·I²)", COULEUR_PB),
+        ("convertisseur_wh", "Convertisseur", COULEUR_CONVERTISSEUR),
     )
     fig_p = go.Figure()
     for cle, lib, coul in COMPOSANTES:

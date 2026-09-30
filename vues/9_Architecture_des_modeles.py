@@ -9,6 +9,9 @@ import streamlit as st
 
 import ems_core as core
 from core.resultats import nom_affichage, famille, EXPLICABILITE
+from core.style import (
+    COULEUR_DECISION, COULEUR_DEMANDE, COULEUR_EB, COULEUR_PB, COULEUR_REFERENCE, COULEUR_SECONDAIRE,
+)
 
 
 # Configuration de page gérée par le routeur Accueil.py.
@@ -41,12 +44,15 @@ def _flux(etapes):
     return html + "</div>"
 
 
-_DEBUT = [("Cycle de conduite", "#6B7280"), ("Variables physiques", "#6B7280")]
-_FIN = [("Modèle EMS", "#3B82F6"), ("Filtre physique", "#22C55E"), ("Répartition EB / PB", "#22C55E")]
+_DEBUT = [("Cycle de conduite", COULEUR_DEMANDE), ("Variables physiques", COULEUR_SECONDAIRE)]
+_FIN = [
+    ("Modèle EMS : décision alpha", COULEUR_DECISION), ("Filtre physique", COULEUR_SECONDAIRE),
+    ("Batterie Énergie", COULEUR_EB), ("Batterie Puissance", COULEUR_PB),
+]
 
 st.markdown("**Avec connaissances expertes** — logique floue, MLP et LSTM neurosymboliques")
 st.markdown(
-    _flux(_DEBUT + [("Concepts OntoHESS", "#F59E0B"), ("Règles floues ou états symboliques", "#F59E0B")] + _FIN),
+    _flux(_DEBUT + [("Concepts OntoHESS", COULEUR_REFERENCE), ("Règles floues ou états symboliques", COULEUR_REFERENCE)] + _FIN),
     unsafe_allow_html=True,
 )
 st.markdown("**Sans connaissances expertes** — modèle physique, MLP, LSTM, GNN")

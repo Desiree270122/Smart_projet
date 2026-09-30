@@ -12,14 +12,14 @@ import streamlit as st
 # Ordre de navigation de l'application. Accueil.py est l'entrée (hors dossier
 # vues/) mais fait partie du parcours, donc inclus ici.
 ORDRE_PAGES = [
-    ("🏠 Accueil", "vues/1_Accueil.py"),
+    ("🏠 Tableau de bord", "vues/1_Accueil.py"),
     ("📂 Préparer une simulation", "vues/2_Preparation_donnees.py"),
     ("▶️ Lancer une simulation", "vues/8_Simulation_cycle_personnalise.py"),
-    ("⚖️ Comparer les méthodes", "vues/5_Comparaison_des_strategies.py"),
-    ("📈 Explorer les résultats", "vues/6_Resultats_et_Analyse.py"),
     ("💡 Pourquoi cette décision ?", "vues/7_Explicabilite.py"),
     ("🧠 Les modèles d'IA", "vues/9_Architecture_des_modeles.py"),
     ("📚 Base de connaissances", "vues/3_Ontologie_OntoHESS.py"),
+    ("⚖️ Comparer les méthodes", "vues/5_Comparaison_des_strategies.py"),
+    ("📈 Explorer les résultats", "vues/6_Resultats_et_Analyse.py"),
 ]
 
 

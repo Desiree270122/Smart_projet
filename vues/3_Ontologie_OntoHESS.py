@@ -22,10 +22,12 @@ import ems_core as core
 from core import ontology_explainer as ox
 from core.navigation import pied_navigation
 from core.resultats import assurer_donnees_session, nom_affichage
+from core.style import COULEUR_DECISION, COULEUR_REFERENCE, COULEUR_SECONDAIRE
 
 
-C_ETAT = "#E0A030"
-C_NOEUD = "#5B8DEF"
+# Palette commune : l'état inféré est une décision (violet), les composants restent neutres.
+C_ETAT = COULEUR_DECISION
+C_NOEUD = COULEUR_REFERENCE
 
 RACINES_FR = {
     "Component": "Composants",
@@ -72,7 +74,7 @@ def _graphe_connaissances(etat_actif):
             mode="markers+text",
             marker=dict(
                 size=[38 if c == etat_actif else (24 if e else 30) for c, e in zip(noeuds, etats)],
-                color=[C_ETAT if c == etat_actif else ("#9AA0AA" if e else C_NOEUD) for c, e in zip(noeuds, etats)],
+                color=[C_ETAT if c == etat_actif else (COULEUR_SECONDAIRE if e else C_NOEUD) for c, e in zip(noeuds, etats)],
                 line=dict(color="white", width=2),
             ),
             text=[f"{v[2]}<br><span style='font-size:9px'>{c}</span>" for c, v in noeuds.items()],

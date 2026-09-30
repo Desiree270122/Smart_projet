@@ -39,20 +39,20 @@ with st.sidebar:
 # la section vide ("") place l'accueil tout en haut, sans titre de section.
 menu = {
     "": [
-        st.Page("vues/1_Accueil.py", title="🏠 Accueil", default=True),
+        st.Page("vues/1_Accueil.py", title="🏠 Tableau de bord", default=True),
     ],
-    "🚗 Simulation": [
+    "📈 Simulation": [
         st.Page("vues/2_Preparation_donnees.py", title="📂 Préparer une simulation"),
         st.Page("vues/8_Simulation_cycle_personnalise.py", title="▶️ Lancer une simulation"),
     ],
-    "📊 Résultats": [
-        st.Page("vues/5_Comparaison_des_strategies.py", title="⚖️ Comparer les méthodes"),
-        st.Page("vues/6_Resultats_et_Analyse.py", title="📈 Explorer les résultats"),
-    ],
-    "💡 Comprendre les décisions": [
+    "🔍 Explication": [
         st.Page("vues/7_Explicabilite.py", title="💡 Pourquoi cette décision ?"),
         st.Page("vues/9_Architecture_des_modeles.py", title="🧠 Les modèles d'IA"),
         st.Page("vues/3_Ontologie_OntoHESS.py", title="📚 Base de connaissances"),
+    ],
+    "⚖️ Comparaison": [
+        st.Page("vues/5_Comparaison_des_strategies.py", title="⚖️ Comparer les méthodes"),
+        st.Page("vues/6_Resultats_et_Analyse.py", title="📈 Explorer les résultats"),
     ],
 }
 

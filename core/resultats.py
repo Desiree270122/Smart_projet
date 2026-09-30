@@ -24,26 +24,23 @@ from core.pertes import bilan_pertes
 FICHIER_REFERENCE = core.RESULTS_DIR / "precomputed" / "simulation_reference.joblib"
 
 
-# Noms lisibles des stratégies (clés internes -> libellés d'affichage), alignés
-# sur ceux de tes tables de résultats (comparaison_finale_6_strategies.csv).
-NOMS_AFFICHAGE = {
-    "EMS_power_limitation": "EB-priority",
-    "EMS_fuzzy_logic": "Fuzzy-v1",
-    "EMS_MLP": "MLP simple",
-    "EMS_MLP_neurosymbolic": "MLP neurosymbolique",
+# Libellés affichés partout dans l'application. Les deux neuro-symboliques sont
+# numérotés et nommés par leur mécanisme, car ils n'intègrent pas le symbolique
+# de la même façon.
+LIBELLES = {
+    "EMS_power_limitation": "Modèle physique",
+    "EMS_fuzzy_logic": "Logique floue",
+    "EMS_MLP": "MLP",
     "EMS_LSTM": "LSTM",
-    "EMS_LSTM_neurosymbolic": "LSTM neurosymbolique",
-    "EMS_GNN": "GNN simple",
+    "EMS_GNN": "GNN",
+    "EMS_MLP_neurosymbolic": "NS-1 · MLP + règles floues",
+    "EMS_LSTM_neurosymbolic": "NS-2 · LSTM + états symboliques",
 }
 
 
 def nom_affichage(cle: str) -> str:
-    """Libellé d'une stratégie. On affiche le code interne (EMS_MLP, EMS_LSTM,
-    ...) tel quel, sauf la stratégie déterministe de référence, renommée
-    « Modèle physique » car elle repose sur la physique et non sur de l'IA."""
-    if cle == "EMS_power_limitation":
-        return "Modèle physique"
-    return cle
+    """Libellé lisible d'une stratégie (clé interne sinon)."""
+    return LIBELLES.get(cle, cle)
 
 
 def charger_reference(chemin=None) -> dict:
