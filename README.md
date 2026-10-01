@@ -37,7 +37,24 @@ streamlit run Accueil.py
 python -m pytest tests
 ```
 
-Chaque page de l'application est exécutée ; une erreur (faute de frappe, import manquant) fait échouer les tests. Ils tournent aussi sur GitHub à chaque push (`.github/workflows/tests.yml`).
+Chaque page de l'application est exécutée, en français et en anglais ; une erreur (faute de frappe, import manquant, texte sans traduction) fait échouer les tests. Ils tournent aussi sur GitHub à chaque push (`.github/workflows/tests.yml`).
+
+### Langue de l'interface
+
+L'application est en français ou en anglais : le choix se fait dans la barre latérale (par défaut, la langue du navigateur). Un lien peut imposer la langue : `…/?lang=en`.
+
+Chaque texte affiché est écrit dans les deux langues là où il est utilisé (`core/i18n.py`) :
+
+```python
+from core.i18n import tr
+st.caption(tr("La demande vaut {p}.", "The demand is {p}.", p=kw(p_dem)))
+```
+
+Les nombres suivent la langue (`core/format.py` : `nombre(12601.6, 1)` donne « 12 601,6 » ou « 12,601.6 »). L'application s'adresse à des physiciens : les textes évitent le vocabulaire de programmation.
+
+### Conclusion « quelle stratégie retenir ? »
+
+La page « Comparaison des stratégies EMS » se termine par une conclusion calculée sur tous les critères (`core/verdict.py`) : (1) sont écartées les stratégies qui ne fournissent pas toute la demande ou dépassent une limite ; (2) les autres sont comparées deux à deux sur M1 à M4 et sur l'explicabilité (E1 à E3), avec un seuil d'indifférence par critère ; (3) 5 000 jeux de poids tirés au hasard mesurent la solidité du résultat. La conclusion générale porte sur les deux cycles de référence (Artemis, et WLTC jamais vu à l'apprentissage).
 
 ### Régénérer les données et les modèles
 

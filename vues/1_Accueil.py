@@ -1,7 +1,7 @@
 """
 Tableau de bord : comprendre en quelques secondes ce qui se passe dans le HESS
-pour un modèle de gestion d'énergie choisi — état du système, répartition de la
-puissance, respect des contraintes — avec une synthèse rédigée.
+pour une stratégie de gestion d'énergie choisie — état du système, répartition
+de la puissance, respect des contraintes — avec une synthèse rédigée.
 """
 
 import sys
@@ -13,10 +13,11 @@ sys.path.insert(0, str(DOSSIER_PROJET))
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
-from core.format import SEPARATEURS_PLOTLY, nombre
 
 import ems_core as core
-from core.resultats import assurer_donnees_session, calculer_metriques, libelle_cycle_affiche, nom_affichage
+from core.format import nombre, separateurs_plotly
+from core.i18n import tr
+from core.resultats import assurer_donnees_session, calculer_metriques, choisir_cycle, nom_affichage
 from core.style import (
     COULEUR_CONVERTISSEUR,
     COULEUR_DECISION,
@@ -41,11 +42,21 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.markdown("<div class='s2-titre'>2SMART · Gestion d'énergie d'un HESS</div>", unsafe_allow_html=True)
 st.markdown(
-    "<div class='s2-accroche'>Deux batteries complémentaires, une décision à chaque seconde : "
-    "quelle part de la puissance confier à chacune ? L'application simule, compare et "
-    "explique cette décision pour sept stratégies.</div>",
+    "<div class='s2-titre'>" + tr("2SMART · Gestion d'énergie d'un HESS", "2SMART · Energy management of a HESS") + "</div>",
+    unsafe_allow_html=True,
+)
+st.markdown(
+    "<div class='s2-accroche'>"
+    + tr(
+        "Deux batteries complémentaires, une décision à chaque seconde : quelle part de la "
+        "puissance confier à chacune ? L'application simule, compare et explique cette décision "
+        "pour sept stratégies de gestion d'énergie (EMS).",
+        "Two complementary batteries, one decision every second: what share of the power should "
+        "each one supply? The application simulates, compares and explains this decision for "
+        "seven energy management strategies (EMS).",
+    )
+    + "</div>",
     unsafe_allow_html=True,
 )
 
@@ -59,11 +70,12 @@ st.markdown(
     "<div class='s2-flux'>"
     + _fleche.join(
         [
-            _etape("Demande du véhicule", COULEUR_DEMANDE),
-            _etape("EMS : décision alpha", COULEUR_DECISION),
-            _etape("Batterie Énergie (1 − alpha)", COULEUR_EB) + " " + _etape("Batterie Puissance (alpha)", COULEUR_PB),
-            _etape("Convertisseur en série (EB)", COULEUR_CONVERTISSEUR),
-            _etape("Bus DC et moteur", COULEUR_SECONDAIRE),
+            _etape(tr("Demande du véhicule", "Vehicle demand"), COULEUR_DEMANDE),
+            _etape(tr("EMS : décision alpha", "EMS: alpha decision"), COULEUR_DECISION),
+            _etape(tr("Batterie Énergie (1 − alpha)", "Energy battery (1 − alpha)"), COULEUR_EB)
+            + " " + _etape(tr("Batterie Puissance (alpha)", "Power battery (alpha)"), COULEUR_PB),
+            _etape(tr("Convertisseur en série (EB)", "Series converter (EB)"), COULEUR_CONVERTISSEUR),
+            _etape(tr("Bus DC et moteur", "DC bus and motor"), COULEUR_SECONDAIRE),
         ]
     )
     + "</div>",
@@ -74,39 +86,36 @@ try:
     source = assurer_donnees_session(st)
 except FileNotFoundError as exc:
     st.error(str(exc))
-    st.info("Lancez une fois le précalcul :  `python scripts/run_simulations.py`")
     st.stop()
 
 resultats = st.session_state.get("resultats_simulation")
 df = st.session_state.get("cycle_pret")
 if not resultats or df is None:
-    st.warning("Aucune donnée disponible.")
+    st.warning(tr("Aucune donnée disponible.", "No data available."))
     st.stop()
 
 
-# Choix du modèle et du cycle
+# Choix de la stratégie et du cycle
 
 noms = list(resultats.keys())
 c_mod, c_cyc, c_btn = st.columns([2, 2, 1])
 strategie = c_mod.selectbox(
-    "Modèle EMS", noms,
+    tr("Stratégie EMS", "EMS strategy"), noms,
     index=noms.index("EMS_power_limitation") if "EMS_power_limitation" in noms else 0,
-    format_func=nom_affichage,
+    format_func=nom_affichage, key="strategie_accueil",
 )
-c_cyc.selectbox(
-    "Cycle de conduite", [libelle_cycle_affiche(st)], disabled=True,
-    help="Changez de cycle dans la barre latérale, ou lancez une simulation sur un autre cycle.",
-)
+choisir_cycle(st, c_cyc)
 with c_btn:
     st.write("")
-    if st.button("▶ Autre cycle", width="stretch", help="Préparer et lancer une simulation sur un autre cycle"):
+    if st.button(tr("▶ Autre cycle", "▶ Other cycle"), width="stretch",
+                 help=tr("Préparer et lancer une simulation sur un autre cycle", "Prepare and run a simulation on another cycle")):
         st.switch_page("vues/2_Preparation_donnees.py")
 
 traj = resultats[strategie]
 n = min(len(df), len(traj["P_EB"]))
 
 
-@st.cache_data(show_spinner="Calcul des indicateurs…")
+@st.cache_data(show_spinner=False)
 def _indicateurs(strategie, signature):
     return calculer_metriques({"resultats": {strategie: resultats[strategie]}, "cycle_df": df})[strategie]
 
@@ -121,64 +130,84 @@ temps_min = (df["time"].to_numpy(dtype=float)[:n] if "time" in df.columns else n
 traction = p_dem > core.EPS_POWER_W
 violations = int(m["nb_violations"] + m["nb_violations_courant"])
 non_fourni = m["energie_non_servie_wh"]
+nom = nom_affichage(strategie)
+eb, pb = tr("Batterie Énergie", "Energy battery"), tr("Batterie Puissance", "Power battery")
 
 
 # Indicateurs de l'état du système
 
-st.subheader(f"État du système avec {nom_affichage(strategie)}")
+st.subheader(tr("État du système avec {s}", "System state with {s}", s=nom))
 l1 = st.columns(3)
-l1[0].metric("Puissance demandée (max)", f"{nombre(p_dem.max() / 1000, 1)} kW",
-             help=f"Moyenne en traction : {nombre(p_dem[traction].mean() / 1000, 1)} kW", border=True)
-l1[1].metric("SOC final · batterie Énergie", f"{nombre(soc_eb[-1] * 100, 1)} %", border=True)
-l1[2].metric("SOC final · batterie Puissance", f"{nombre(soc_pb[-1] * 100, 1)} %", border=True)
+l1[0].metric(
+    tr("Puissance demandée (max)", "Power demand (max)"), f"{nombre(p_dem.max() / 1000, 1)} kW",
+    help=tr("Moyenne en traction : {p} kW", "Mean in traction: {p} kW", p=nombre(p_dem[traction].mean() / 1000, 1)),
+    border=True,
+)
+l1[1].metric(tr("SOC final · batterie Énergie", "Final SOC · Energy battery"), f"{nombre(soc_eb[-1] * 100, 1)} %", border=True)
+l1[2].metric(tr("SOC final · batterie Puissance", "Final SOC · Power battery"), f"{nombre(soc_pb[-1] * 100, 1)} %", border=True)
 l2 = st.columns(3)
-l2[0].metric("Rendement du HESS (estimé)", f"{nombre(m['rendement_hess'] * 100, 2)} %", border=True)
-l2[1].metric("Écart entre les SOC (RMSE)", f"{nombre(m['rmse_delta_soc'] * 100, 1)} pts",
-             help=f"Écart maximal : {nombre(m['delta_soc_max'] * 100, 1)} points", border=True)
+l2[0].metric(tr("Rendement du HESS (estimé)", "HESS efficiency (estimated)"), f"{nombre(m['rendement_hess'] * 100, 2)} %", border=True)
+l2[1].metric(
+    tr("Écart moyen entre les SOC", "Mean gap between the SOCs"), tr("{v} pts", "{v} pts", v=nombre(m["rmse_delta_soc"] * 100, 1)),
+    help=tr("Écart quadratique moyen ; écart maximal : {v} points", "Root-mean-square gap; maximum gap: {v} points",
+            v=nombre(m["delta_soc_max"] * 100, 1)),
+    border=True,
+)
+respectees = violations == 0 and non_fourni < 1
 l2[2].metric(
-    "Contraintes et demande",
-    "✓ respectées" if violations == 0 and non_fourni < 1 else "✗ non respectées",
-    help=f"{violations} violation(s) de SOC ou de courant ; {nombre(non_fourni, 0)} Wh de demande non fournie",
+    tr("Contraintes et demande", "Constraints and demand"),
+    tr("✓ respectées", "✓ met") if respectees else tr("✗ non respectées", "✗ not met"),
+    help=tr(
+        "{v} dépassement(s) de SOC ou de courant ; {e} Wh de demande non fournie",
+        "{v} SOC or current limit violation(s); {e} Wh of demand not supplied",
+        v=violations, e=nombre(non_fourni, 0),
+    ),
     border=True,
 )
 
 
 # Les deux graphiques clés
 
-st.subheader("Évolution des états de charge")
+st.subheader(tr("Évolution des états de charge", "State of charge over time"))
 fig_soc = go.Figure(
     [
-        go.Scatter(x=np.arange(len(soc_eb)) * core.DT_SECONDS / 60.0, y=soc_eb * 100, name="Batterie Énergie",
+        go.Scatter(x=np.arange(len(soc_eb)) * core.DT_SECONDS / 60.0, y=soc_eb * 100, name=eb,
                    line=dict(color=COULEUR_EB, width=2)),
-        go.Scatter(x=np.arange(len(soc_pb)) * core.DT_SECONDS / 60.0, y=soc_pb * 100, name="Batterie Puissance",
+        go.Scatter(x=np.arange(len(soc_pb)) * core.DT_SECONDS / 60.0, y=soc_pb * 100, name=pb,
                    line=dict(color=COULEUR_PB, width=2)),
     ]
 )
 fig_soc.add_hline(y=core.SOC_EB_MIN * 100, line=dict(color=COULEUR_VIOLATION, dash="dot", width=1),
-                  annotation_text="SOC minimal", annotation_position="bottom right")
+                  annotation_text=tr("SOC minimal", "Minimum SOC"), annotation_position="bottom right")
 fig_soc.update_layout(
-    separators=SEPARATEURS_PLOTLY, height=300, margin=dict(t=10, b=40, l=10, r=10), hovermode="x unified",
-    xaxis_title="Temps (min)", yaxis=dict(title="SOC (%)", range=[0, 102]),
+    separators=separateurs_plotly(), height=300, margin=dict(t=10, b=40, l=10, r=10), hovermode="x unified",
+    xaxis_title=tr("Temps (min)", "Time (min)"), yaxis=dict(title="SOC (%)", range=[0, 102]),
     legend=dict(orientation="h", y=1.12, x=0),
 )
 st.plotly_chart(fig_soc, width="stretch")
 
-st.subheader("Répartition de la puissance")
-st.caption(
-    "Le véhicule demande une puissance ; l'EMS la répartit entre les deux batteries. "
-    "Faites glisser la réglette sous le graphique pour zoomer sur une portion du cycle."
-)
+st.subheader(tr("Répartition de la puissance", "Power split"))
+st.caption(tr(
+    "Le véhicule demande une puissance ; l'EMS la répartit entre les deux batteries. Faites "
+    "glisser la réglette sous le graphique pour zoomer sur une portion du cycle.",
+    "The vehicle demands a power; the EMS splits it between the two batteries. Drag the slider "
+    "below the chart to zoom in on part of the cycle.",
+))
+# Portion du cycle affichée à l'ouverture (15 minutes), ajustable avec la réglette.
+debut_vue = float(min(60.0, max(0.0, temps_min[-1] - 15.0)))
+vue = [debut_vue, float(min(debut_vue + 15.0, temps_min[-1]))]
 fig_p = go.Figure(
     [
-        go.Scattergl(x=temps_min, y=p_dem / 1000, name="Demande", line=dict(color=COULEUR_DEMANDE, width=1.2)),
-        go.Scattergl(x=temps_min, y=p_eb / 1000, name="Batterie Énergie", line=dict(color=COULEUR_EB, width=1.2)),
-        go.Scattergl(x=temps_min, y=p_pb / 1000, name="Batterie Puissance", line=dict(color=COULEUR_PB, width=1.2)),
+        # Courbe non accélérée : c'est elle que la réglette reproduit en miniature.
+        go.Scatter(x=temps_min, y=p_dem / 1000, name=tr("Demande", "Demand"), line=dict(color=COULEUR_DEMANDE, width=1.2)),
+        go.Scattergl(x=temps_min, y=p_eb / 1000, name=eb, line=dict(color=COULEUR_EB, width=1.2)),
+        go.Scattergl(x=temps_min, y=p_pb / 1000, name=pb, line=dict(color=COULEUR_PB, width=1.2)),
     ]
 )
 fig_p.update_layout(
-    separators=SEPARATEURS_PLOTLY, height=380, margin=dict(t=10, b=10, l=10, r=10), hovermode="x unified",
-    yaxis_title="Puissance (kW)",
-    xaxis=dict(title="Temps (min)", rangeslider=dict(visible=True, thickness=0.08), range=[60, 90]),
+    separators=separateurs_plotly(), height=380, margin=dict(t=10, b=10, l=10, r=10), hovermode="x unified",
+    yaxis_title=tr("Puissance (kW)", "Power (kW)"),
+    xaxis=dict(title=tr("Temps (min)", "Time (min)"), rangeslider=dict(visible=True, thickness=0.08), range=vue),
     legend=dict(orientation="h", y=1.12, x=0),
 )
 st.plotly_chart(fig_p, width="stretch")
@@ -186,58 +215,90 @@ st.plotly_chart(fig_p, width="stretch")
 
 # Synthèse rédigée
 
-st.subheader("Analyse de la simulation")
+st.subheader(tr("Analyse de la simulation", "Simulation summary"))
 part_pb = float(np.sum(p_pb[traction])) / float(np.sum(p_dem[traction])) * 100 if traction.any() else 0.0
 temps_pb = float(np.mean(p_pb[traction] > 100.0)) * 100 if traction.any() else 0.0
 distance = float(np.sum(df["speed"].to_numpy(dtype=float)[:n])) * core.DT_SECONDS / 1000 if "speed" in df.columns else float("nan")
 phrases = [
-    f"Sur ce cycle ({nombre(n * core.DT_SECONDS / 60, 0)} min, {nombre(distance, 0)} km), la demande atteint "
-    f"{nombre(p_dem.max() / 1000, 1)} kW en traction et {nombre(p_dem.min() / 1000, 1)} kW au freinage.",
-    f"{nom_affichage(strategie)} confie **{nombre(part_pb, 0)} %** de l'énergie de traction à la batterie "
-    f"Puissance, qui intervient pendant {nombre(temps_pb, 0)} % du temps de traction.",
-    f"L'écart entre les deux SOC atteint au plus **{nombre(m['delta_soc_max'] * 100, 1)} points** (écart "
-    f"quadratique moyen {nombre(m['rmse_delta_soc'] * 100, 1)} points) ; les SOC finaux sont de "
-    f"{nombre(soc_eb[-1] * 100, 1)} % (Énergie) et {nombre(soc_pb[-1] * 100, 1)} % (Puissance).",
-    (
-        "Aucune violation de SOC ni de courant, et toute la puissance demandée a été fournie."
-        if violations == 0 and non_fourni < 1
-        else f"**Attention** : {violations} violation(s) de contrainte et {nombre(non_fourni, 0)} Wh de "
-        "demande non fournie ; les autres indicateurs de ce modèle sont donc flattés."
+    tr(
+        "Sur ce cycle ({d} min, {km} km), la demande atteint {pmax} kW en traction et {pmin} kW au freinage.",
+        "Over this cycle ({d} min, {km} km), demand reaches {pmax} kW in traction and {pmin} kW when braking.",
+        d=nombre(n * core.DT_SECONDS / 60, 0), km=nombre(distance, 0),
+        pmax=nombre(p_dem.max() / 1000, 1), pmin=nombre(p_dem.min() / 1000, 1),
     ),
-    f"Rendement estimé du HESS : **{nombre(m['rendement_hess'] * 100, 2)} %** ({nombre(m['pertes_totales_wh'], 0)} Wh "
-    f"de pertes estimées, dont {nombre(m['pertes_convertisseur_wh'], 0)} Wh dans le convertisseur).",
+    tr(
+        "{s} confie **{part} %** de l'énergie de traction à la batterie Puissance, qui intervient "
+        "pendant {t} % du temps de traction.",
+        "{s} gives **{part} %** of the traction energy to the Power battery, which is used during "
+        "{t} % of the traction time.",
+        s=nom, part=nombre(part_pb, 0), t=nombre(temps_pb, 0),
+    ),
+    tr(
+        "L'écart entre les deux SOC atteint au plus **{max} points** (écart quadratique moyen "
+        "{rms} points) ; les SOC finaux sont de {eb} % (Énergie) et {pb} % (Puissance).",
+        "The gap between the two SOCs reaches at most **{max} points** (root-mean-square gap "
+        "{rms} points); the final SOCs are {eb} % (Energy) and {pb} % (Power).",
+        max=nombre(m["delta_soc_max"] * 100, 1), rms=nombre(m["rmse_delta_soc"] * 100, 1),
+        eb=nombre(soc_eb[-1] * 100, 1), pb=nombre(soc_pb[-1] * 100, 1),
+    ),
+    tr(
+        "Aucun dépassement de SOC ni de courant, et toute la puissance demandée a été fournie.",
+        "No SOC or current limit was exceeded, and all the demanded power was supplied.",
+    ) if respectees else tr(
+        "**Attention** : {v} dépassement(s) de limite et {e} Wh de demande non fournie ; les autres "
+        "indicateurs de cette stratégie sont donc flattés.",
+        "**Warning**: {v} limit violation(s) and {e} Wh of demand not supplied; the other "
+        "indicators of this strategy are therefore flattering.",
+        v=violations, e=nombre(non_fourni, 0),
+    ),
+    tr(
+        "Rendement estimé du HESS : **{r} %** ({p} Wh de pertes estimées, dont {c} Wh dans le convertisseur).",
+        "Estimated HESS efficiency: **{r} %** ({p} Wh of estimated losses, including {c} Wh in the converter).",
+        r=nombre(m["rendement_hess"] * 100, 2), p=nombre(m["pertes_totales_wh"], 0), c=nombre(m["pertes_convertisseur_wh"], 0),
+    ),
 ]
 with st.container(border=True):
     st.markdown(" ".join(phrases))
 
 b1, b2, b3 = st.columns(3)
-if b1.button("🔍 Pourquoi ces décisions ?", width="stretch", type="primary"):
+if b1.button(tr("🔍 Pourquoi ces décisions ?", "🔍 Why these decisions?"), width="stretch", type="primary"):
     st.switch_page("vues/7_Explicabilite.py")
-if b2.button("⚖️ Comparer les modèles", width="stretch"):
+if b2.button(tr("⚖️ Comparer les stratégies", "⚖️ Compare the strategies"), width="stretch"):
     st.switch_page("vues/5_Comparaison_des_strategies.py")
-if b3.button("📈 Simuler un autre cycle", width="stretch"):
+if b3.button(tr("📈 Simuler un autre cycle", "📈 Simulate another cycle"), width="stretch"):
     st.switch_page("vues/2_Preparation_donnees.py")
 
 
-with st.expander("Le projet en bref"):
-    st.markdown(
-        "- **Le problème** : un véhicule électrique équipé de deux batteries complémentaires "
-        "doit décider, à chaque instant, laquelle fournit la puissance demandée.\n"
-        "- **Pourquoi c'est difficile** : les objectifs se contredisent (autonomie, durée de "
-        "vie, rendement), les contraintes physiques sont strictes et les cycles de conduite "
-        "très variables.\n"
-        "- **La réponse de 2SMART** : comparer quatre familles d'approches (règles fixes, "
-        "ontologie seule, apprentissage seul, hybride neuro-symbolique) et expliquer chaque "
-        "décision, sous le contrôle d'un filtre physique de sécurité.\n"
-        "- **L'architecture** : cascade à source de courant contrôlée (Fonseca de Freitas et "
-        "al., IEEE Access 2024) ; le convertisseur, en série, ne traite qu'environ 10 % de la "
-        "puissance de la batterie Énergie."
-    )
+with st.expander(tr("Le projet en bref", "The project in brief")):
+    st.markdown(tr(
+        "- **Le problème** : un véhicule électrique équipé de deux batteries complémentaires doit "
+        "décider, à chaque instant, laquelle fournit la puissance demandée.\n"
+        "- **Pourquoi c'est difficile** : les objectifs se contredisent (autonomie, durée de vie, "
+        "rendement), les contraintes physiques sont strictes et les cycles de conduite très variables.\n"
+        "- **La réponse de 2SMART** : comparer quatre familles d'approches (règles fixes, ontologie "
+        "seule, apprentissage seul, hybride neuro-symbolique) et expliquer chaque décision, sous le "
+        "contrôle d'un filtre physique de sécurité.\n"
+        "- **L'architecture** : cascade à source de courant contrôlée (Fonseca de Freitas et al., "
+        "IEEE Access 2024) ; le convertisseur, en série, ne traite qu'environ 10 % de la puissance "
+        "de la batterie Énergie.",
+        "- **The problem**: an electric vehicle with two complementary batteries must decide, at "
+        "every instant, which one supplies the demanded power.\n"
+        "- **Why it is hard**: the objectives conflict (range, lifetime, efficiency), the physical "
+        "constraints are strict and driving cycles vary widely.\n"
+        "- **The 2SMART approach**: compare four families of approaches (fixed rules, ontology "
+        "only, learning only, neuro-symbolic hybrid) and explain every decision, under the control "
+        "of a physical safety filter.\n"
+        "- **The architecture**: controlled current source cascade (Fonseca de Freitas et al., "
+        "IEEE Access 2024); the converter, in series, processes only about 10 % of the Energy "
+        "battery's power.",
+    ))
     e1, e2 = st.columns(2)
     e1.latex(r"P_{PB} = \alpha \times P_{dem}")
     e2.latex(r"P_{EB} = (1 - \alpha) \times P_{dem}")
-    st.caption(
+    st.caption(tr(
         "alpha = 0 : toute la puissance vient de la batterie Énergie ; alpha = 1 : toute la "
         "puissance vient de la batterie Puissance. La décision passe ensuite par le filtre "
-        "physique de sécurité."
-    )
+        "physique de sécurité.",
+        "alpha = 0: all the power comes from the Energy battery; alpha = 1: all the power comes "
+        "from the Power battery. The decision then goes through the physical safety filter.",
+    ))

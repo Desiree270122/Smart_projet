@@ -12,6 +12,8 @@ L'instant choisi est aussi conservé d'une page à l'autre.
 import numpy as np
 import streamlit as st
 
+from core.i18n import tr
+
 
 _CLE_INSTANT = "_instant_t"      # survit au changement de page
 _CLE_CURSEUR = "curseur_instant"  # clé du widget, nettoyée par Streamlit hors page
@@ -49,7 +51,7 @@ def choisir_instant(df, n, conteneur=st):
         np.clip(st.session_state.get(_CLE_INSTANT, t_defaut), t_min, t_max)
     )
     t_choisi = conteneur.slider(
-        "Instant du cycle (s)" if "time" in df.columns else "Échantillon",
+        tr("Instant du cycle (s)", "Time in the cycle (s)") if "time" in df.columns else tr("Échantillon", "Sample"),
         t_min,
         t_max,
         key=_CLE_CURSEUR,

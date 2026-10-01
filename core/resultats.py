@@ -1,15 +1,14 @@
 """
 core/resultats.py — Source UNIQUE de chargement et d'exploitation des
-résultats de simulation précalculés.
+résultats de simulation.
 
 Toutes les pages d'analyse (Tableau de bord, Comparaison, Résultats de simulation,
-Explicabilité, Base de connaissances) passent par ce module — et non chacune
-à sa manière. Elles ne relancent jamais la simulation lourde : elles lisent le
-fichier produit hors-ligne par `scripts/run_simulations.py`.
+Explicabilité, Base de connaissances) passent par ce module. Elles ne relancent
+jamais la simulation complète : elles lisent les fichiers produits par
+`scripts/run_simulations.py`, ou la dernière simulation lancée dans l'application.
 
-Le fichier de référence est AUTO-SUFFISANT : il contient les trajectoires de
+Chaque fichier de référence est AUTO-SUFFISANT : il contient les trajectoires de
 chaque stratégie, les signaux du cycle (dont hasPower), et des métadonnées.
-Aucune dépendance au CSV d'origine n'est donc nécessaire.
 """
 
 from functools import lru_cache
@@ -18,58 +17,73 @@ from pathlib import Path
 import numpy as np
 
 import ems_core as core
+from core.i18n import lib, tr
 from core.pertes import bilan_pertes
 
 
-# Emplacement standard du résultat précalculé.
+# Emplacement standard du résultat de référence.
 FICHIER_REFERENCE = core.RESULTS_DIR / "precomputed" / "simulation_reference.joblib"
 
 
-# Libellés affichés partout dans l'application. Les deux neuro-symboliques sont
-# numérotés et nommés par leur mécanisme, car ils n'intègrent pas le symbolique
-# de la même façon.
+# Noms affichés des stratégies (français, anglais).
 LIBELLES = {
-    "EMS_power_limitation": "Modèle physique",
-    "EMS_fuzzy_logic": "Logique floue",
-    "EMS_MLP": "MLP",
-    "EMS_LSTM": "LSTM",
-    "EMS_GNN": "GNN",
-    "EMS_MLP_neurosymbolic": "NS-MLP",
-    "EMS_LSTM_neurosymbolic": "NS-LSTM",
+    "EMS_power_limitation": ("Modèle physique", "Physical model"),
+    "EMS_fuzzy_logic": ("Logique floue", "Fuzzy logic"),
+    "EMS_MLP": ("MLP", "MLP"),
+    "EMS_LSTM": ("LSTM", "LSTM"),
+    "EMS_GNN": ("GNN", "GNN"),
+    "EMS_MLP_neurosymbolic": ("NS-MLP", "NS-MLP"),
+    "EMS_LSTM_neurosymbolic": ("NS-LSTM", "NS-LSTM"),
 }
 
 
 def nom_affichage(cle: str) -> str:
-    """Libellé lisible d'une stratégie (clé interne sinon)."""
-    return LIBELLES.get(cle, cle)
+    """Nom lisible d'une stratégie (clé interne sinon)."""
+    return lib(LIBELLES[cle]) if cle in LIBELLES else cle
 
 
 # Cycles de référence précalculés par scripts/run_simulations.py.
 CYCLES_REFERENCE = {
-    "artemis": ("Artemis urbain + routier (×6)", FICHIER_REFERENCE),
-    "wltc": ("WLTC classe 3 (×4)", core.RESULTS_DIR / "precomputed" / "simulation_wltc.joblib"),
+    "artemis": (("Artemis urbain + routier (×6)", "Artemis urban + road (×6)"), FICHIER_REFERENCE),
+    "wltc": (("WLTC classe 3 (×4)", "WLTC class 3 (×4)"), core.RESULTS_DIR / "precomputed" / "simulation_wltc.joblib"),
 }
 CYCLE_PERSONNALISE = "personnalise"
 
 # Clés de session. « cycle_pret » est TOUJOURS le cycle des résultats affichés ;
 # le cycle en cours de préparation (page 2) vit à part, dans « cycle_prepare ».
-CLE_CYCLE = "_cycle_choisi"                   # choix de la barre latérale
-CLE_CYCLE_DEMANDE = "_cycle_a_selectionner"   # choix demandé par une page, appliqué au run suivant
+CLE_CYCLE = "_cycle_choisi"          # cycle affiché ; conservé d'une page à l'autre
+_CLE_SELECTEUR = "selecteur_cycle"   # clé du widget, effacée par Streamlit hors de la page
 CLE_PERSONNALISE = "_simulation_personnalisee"
+
+SOURCES = {
+    "reference": ("résultats calculés à l'avance", "pre-computed results"),
+    CYCLE_PERSONNALISE: ("simulation lancée dans l'application", "simulation run in the app"),
+}
+
+
+def libelle_cycle(cle: str) -> str:
+    """Nom d'un cycle de référence ou du cycle préparé."""
+    if cle in CYCLES_REFERENCE:
+        return lib(CYCLES_REFERENCE[cle][0])
+    return tr("Le cycle que vous avez préparé", "The cycle you prepared")
 
 
 def charger_reference(chemin=None) -> dict:
-    """Charge un fichier de simulation précalculé.
+    """Charge un fichier de résultats de référence.
 
     Retourne un dictionnaire {resultats, cycle_df, avertissements, meta}.
-    Lève FileNotFoundError explicite si le précalcul n'a pas encore été lancé.
+    Lève FileNotFoundError si les résultats n'ont pas encore été calculés.
     """
     chemin = Path(chemin) if chemin else FICHIER_REFERENCE
     if not chemin.exists():
         raise FileNotFoundError(
-            f"Résultats précalculés introuvables : {chemin}. "
-            "Lancez d'abord le précalcul :\n"
-            "    python scripts/run_simulations.py"
+            tr(
+                "Les résultats de référence sont introuvables ({f}). Ils se calculent une fois "
+                "avec la commande : python scripts/run_simulations.py",
+                "The reference results cannot be found ({f}). They are computed once with "
+                "the command: python scripts/run_simulations.py",
+                f=chemin.name,
+            )
         )
     return _charger_joblib(str(chemin), chemin.stat().st_mtime)
 
@@ -83,18 +97,51 @@ def _charger_joblib(chemin, _mtime):
 
 def cycles_disponibles(st) -> dict:
     """{clé: libellé} des cycles dont les résultats peuvent être affichés."""
-    options = {cle: lib for cle, (lib, chemin) in CYCLES_REFERENCE.items() if Path(chemin).exists()}
+    options = {cle: lib(libelle) for cle, (libelle, chemin) in CYCLES_REFERENCE.items() if Path(chemin).exists()}
     if CLE_PERSONNALISE in st.session_state:
-        options[CYCLE_PERSONNALISE] = "Ma dernière simulation"
+        options[CYCLE_PERSONNALISE] = tr("Ma dernière simulation", "My last simulation")
     return options
 
 
 def afficher_simulation_personnalisee(st, donnees) -> None:
     """Enregistre une simulation lancée dans l'application et la fait afficher
-    par toutes les pages (le choix de la barre latérale suit au run suivant)."""
+    par toutes les pages d'analyse."""
     st.session_state[CLE_PERSONNALISE] = donnees
-    st.session_state[CLE_CYCLE_DEMANDE] = CYCLE_PERSONNALISE
-    _installer(st, donnees, CYCLE_PERSONNALISE, "simulation lancée dans l'application")
+    st.session_state[CLE_CYCLE] = CYCLE_PERSONNALISE
+    _installer(st, donnees, CYCLE_PERSONNALISE, CYCLE_PERSONNALISE)
+
+
+def choisir_cycle(st, conteneur=None) -> str:
+    """Affiche le sélecteur du cycle de conduite dont les résultats sont montrés
+    (cycles de référence, et dernière simulation lancée) ; retourne le choix.
+
+    Le choix vaut pour toutes les pages d'analyse. Il est enregistré avant la
+    réexécution de la page : assurer_donnees_session le lit donc à jour, que le
+    sélecteur soit placé avant ou après son appel.
+    """
+    options = cycles_disponibles(st)
+    if not options:
+        return "artemis"
+    courant = st.session_state.get(CLE_CYCLE)
+    if courant not in options:
+        courant = next(iter(options))
+    st.session_state[CLE_CYCLE] = courant
+    st.session_state[_CLE_SELECTEUR] = courant
+
+    def _memoriser():
+        st.session_state[CLE_CYCLE] = st.session_state[_CLE_SELECTEUR]
+
+    (conteneur or st).selectbox(
+        tr("Cycle de conduite", "Driving cycle"), list(options), format_func=options.get,
+        key=_CLE_SELECTEUR, on_change=_memoriser,
+        help=tr(
+            "Résultats affichés sur toutes les pages d'analyse. « WLTC » est un cycle que les "
+            "stratégies à apprentissage n'ont jamais rencontré.",
+            "Results shown on all analysis pages. “WLTC” is a cycle the learning-based strategies "
+            "have never encountered.",
+        ),
+    )
+    return courant
 
 
 def _installer(st, donnees, choix, source):
@@ -114,8 +161,8 @@ def libelle_cycle_affiche(st) -> str:
     choix = st.session_state.get("_donnees_chargees", "artemis")
     if choix == CYCLE_PERSONNALISE:
         meta = st.session_state.get(CLE_PERSONNALISE, {}).get("meta", {})
-        return f"Ma dernière simulation : {meta.get('cycle', 'cycle personnalisé')}"
-    return CYCLES_REFERENCE.get(choix, (choix,))[0]
+        return tr("Ma dernière simulation : {c}", "My last simulation: {c}", c=libelle_cycle(meta.get("cycle_cle", "")))
+    return libelle_cycle(choix)
 
 
 def assurer_donnees_session(st, chemin=None) -> str:
@@ -128,55 +175,20 @@ def assurer_donnees_session(st, chemin=None) -> str:
       à part pour pouvoir passer d'un cycle à l'autre sans la perdre.
 
     Les résultats et leur cycle sont toujours installés ensemble : préparer un
-    nouveau cycle (page 2) ne peut plus les désaccorder.
+    nouveau cycle (page 2) ne peut pas les désaccorder.
 
-    Retourne la source utilisée.
+    Retourne la source des données, dans la langue choisie.
     """
     choix = st.session_state.get(CLE_CYCLE, "artemis")
     if choix == CYCLE_PERSONNALISE and CLE_PERSONNALISE not in st.session_state:
         choix = "artemis"
-    if st.session_state.get("_donnees_chargees") == choix and "resultats_simulation" in st.session_state:
-        return st.session_state.get("_source_donnees", "déjà en session")
-
-    if choix == CYCLE_PERSONNALISE:
-        _installer(st, st.session_state[CLE_PERSONNALISE], choix, "simulation lancée dans l'application")
-    else:
-        _installer(st, charger_reference(chemin or CYCLES_REFERENCE[choix][1]), choix, "référence précalculée")
-    return st.session_state["_source_donnees"]
-
-
-def recalculer_cout_physique(traj: dict, p_dem) -> np.ndarray:
-    """Recalcule, pas à pas, le VRAI coût physique multi-objectif (total_cost du
-    filtre) de la décision prise par une stratégie, à partir de sa trajectoire.
-
-    On rejoue `candidate_metrics` avec l'alpha réellement appliqué (alpha_final)
-    et l'état SOC de CETTE stratégie à chaque instant. La règle de mise à jour de
-    alpha_prev (inchangé sur demande quasi nulle) reproduit celle du moteur, pour
-    que le terme de continuité soit cohérent.
-
-    Retourne un tableau de longueur n (NaN sur les pas à demande quasi nulle, où
-    aucune répartition n'est calculée).
-    """
-    alpha = np.asarray(traj["alpha_final"], dtype=float)
-    soc_eb = np.asarray(traj["SOC_EB"], dtype=float)  # longueur n+1 (état avant chaque pas)
-    soc_pb = np.asarray(traj["SOC_PB"], dtype=float)
-    p = np.asarray(p_dem, dtype=float)
-    n = len(p)
-
-    couts = np.full(n, np.nan, dtype=float)
-    alpha_prev = None
-
-    for t in range(n):
-        p_t = p[t]
-        if abs(p_t) <= core.EPS_POWER_W:
-            continue
-        m = core.candidate_metrics(
-            np.array([alpha[t]]), p_t, soc_eb[t], soc_pb[t], alpha_prev
-        )
-        couts[t] = float(m["total_cost"][0])
-        alpha_prev = alpha[t]
-
-    return couts
+    deja = st.session_state.get("_donnees_chargees") == choix and "resultats_simulation" in st.session_state
+    if not deja:
+        if choix == CYCLE_PERSONNALISE:
+            _installer(st, st.session_state[CLE_PERSONNALISE], choix, CYCLE_PERSONNALISE)
+        else:
+            _installer(st, charger_reference(chemin or CYCLES_REFERENCE[choix][1]), choix, "reference")
+    return lib(SOURCES.get(st.session_state.get("_source_donnees"), SOURCES["reference"]))
 
 
 def _somme_wh(puissance) -> float:
@@ -201,7 +213,7 @@ def cycle_artemis_affiche(st) -> bool:
     choix = st.session_state.get("_donnees_chargees")
     if choix == CYCLE_PERSONNALISE:
         meta = st.session_state.get(CLE_PERSONNALISE, {}).get("meta", {})
-        return meta.get("cycle") == CYCLES_REFERENCE["artemis"][0]
+        return meta.get("cycle_cle") == "artemis"
     return choix in (None, "artemis")
 
 
@@ -282,7 +294,7 @@ def calculer_metriques(donnees: dict) -> dict:
             "energie_non_servie_wh": _somme_wh(traj["P_unserved"]),
             "regen_rejetee_wh": _somme_wh(traj["P_regen_curtailed"]),
             "pertes_totales_wh": pertes["total_wh"],
-            # Protocole M1 à M7 (voir core/verdict.py).
+            # Protocole M1 à M6 (page « Comparaison des stratégies EMS »).
             "energie_consommee_wh": e_cons,
             "energie_km_wh": e_cons / distance_km if distance_km > 0 else float("nan"),
             "rendement_hess": e_traction / (e_traction + pertes["total_wh"]) if e_traction > 0 else float("nan"),
@@ -298,142 +310,24 @@ def calculer_metriques(donnees: dict) -> dict:
             "i_pb_rms": float(np.sqrt(np.nanmean(i_pb ** 2))),
         }
 
-        # Vrai coût physique (si le cycle est disponible dans le fichier).
-        if p_dem is not None:
-            couts_phys = recalculer_cout_physique(traj, p_dem)
-            infos["cout_physique_moyen"] = float(np.nanmean(couts_phys))
-        else:
-            infos["cout_physique_moyen"] = float("nan")
-
         metriques[nom] = infos
 
     return metriques
 
 
-def statistiques_detaillees(donnees: dict) -> dict:
-    """Statistiques physiques synthétiques par stratégie (pour la page
-    Résultats & Analyse) : plutôt que 14 000 points bruts, on résume chaque
-    série temporelle par des indicateurs lisibles par un physicien.
-
-    Retourne {cle_strategie: {indicateur: valeur, ...}}.
-    """
-    resultats = donnees["resultats"]
-    dt = core.DT_SECONDS
-
-    stats = {}
-    for nom, traj in resultats.items():
-        p_eb = np.asarray(traj["P_EB"], dtype=float)
-        p_pb = np.asarray(traj["P_PB"], dtype=float)
-        i_eb = np.asarray(traj["I_EB"], dtype=float)
-        i_pb = np.asarray(traj["I_PB"], dtype=float)
-        soc_eb = np.asarray(traj["SOC_EB"], dtype=float)
-        soc_pb = np.asarray(traj["SOC_PB"], dtype=float)
-
-        stats[nom] = {
-            "soc_eb_final": float(traj.get("SOC_EB_final", soc_eb[-1])),
-            "soc_pb_final": float(traj.get("SOC_PB_final", soc_pb[-1])),
-            # Énergie délivrée (décharge = puissance positive), en Wh.
-            "energie_eb_wh": float(np.sum(np.clip(p_eb, 0.0, None)) * dt / 3600.0),
-            "energie_pb_wh": float(np.sum(np.clip(p_pb, 0.0, None)) * dt / 3600.0),
-            "i_eb_rms": float(np.sqrt(np.mean(i_eb ** 2))),
-            "i_pb_rms": float(np.sqrt(np.mean(i_pb ** 2))),
-            "i_eb_max": float(np.max(np.abs(i_eb))),
-            "i_pb_max": float(np.max(np.abs(i_pb))),
-            "p_eb_max": float(np.max(np.abs(p_eb))),
-            "p_pb_max": float(np.max(np.abs(p_pb))),
-            "p_eb_moy": float(np.mean(np.abs(p_eb))),
-            "p_pb_moy": float(np.mean(np.abs(p_pb))),
-        }
-    return stats
-
-
-# Critères de sélection : libellé -> (métrique, sens). "min" = plus bas = mieux.
-# Tous sont MESURÉS sur la trajectoire simulée.
-CRITERES = {
-    "Sécurité physique": ("nb_violations", "min"),
-    # Coût multicritère du filtre (stress de puissance, débit, risque SOC,
-    # convertisseur, continuité). Ce n'est pas une énergie : le modèle du HESS
-    # étant sans pertes, toutes les répartitions consomment la même énergie.
-    "Coût physique": ("cout_physique_moyen", "min"),
-    # Pertes R·I² des deux batteries et pertes du convertisseur (core/pertes.py),
-    # estimées après coup sur des trajectoires simulées sans pertes.
-    "Pertes estimées": ("pertes_totales_wh", "min"),
-    "Préservation EB": ("soc_eb_final", "max"),
-    "Préservation PB": ("soc_pb_final", "max"),
-    "Équilibre EB/PB": ("desequilibre_soc_moyen", "min"),
-    "Performance globale": ("cout_physique_moyen", "min"),
-    # Anciennement nommé « Explicabilité », ce qui était trompeur : le nombre de
-    # corrections mesure à quel point la décision respectait déjà la physique,
-    # pas la capacité du modèle à s'expliquer.
-    "Alignement au filtre physique": ("nb_corrections", "min"),
-}
-
-
-# L'explicabilité n'est PAS mesurable sur une trajectoire : c'est une propriété
-# de la STRUCTURE du modèle. Elle est donc déclarée et justifiée ici, jamais
-# calculée. Niveau : 3 = explicable par construction, 2 = partiellement
-# interprétable, 1 = boîte noire (explication seulement post-hoc).
-NIVEAUX_EXPLICABILITE = {
-    3: "Explicable par construction",
-    2: "Partiellement interprétable",
-    1: "Boîte noire (explication post-hoc)",
-}
-
-EXPLICABILITE = {
-    "EMS_power_limitation": (
-        3,
-        "Règle déterministe explicite : la décision se lit directement dans la règle, "
-        "mais il ne s'agit pas d'un modèle appris.",
-    ),
-    "EMS_fuzzy_logic": (
-        3,
-        "Règles floues expertes formalisées à partir de l'ontologie OntoHESS : "
-        "chaque règle activée et sa force sont lisibles.",
-    ),
-    "EMS_MLP_neurosymbolic": (
-        3,
-        "Neuro-symbolique : la décision se décompose exactement en base floue "
-        "(règles expertes) + correction neuronale bornée à ±0,2, sous le contrôle d'un "
-        "garde-fou symbolique (règles R14/R16) ; la correction elle-même reste opaque, "
-        "mais son poids dans la décision est mesurable.",
-    ),
-    "EMS_LSTM_neurosymbolic": (
-        2,
-        "LSTM enrichi de quatre états symboliques de l'ontologie en entrée : ces "
-        "entrées ont un sens métier, mais la décision sort d'un réseau récurrent "
-        "opaque (pas de base floue ni de correction bornée) ; explication post-hoc.",
-    ),
-    "EMS_GNN": (
-        2,
-        "Le graphe reproduit la structure physique du HESS : l'importance de chaque "
-        "composant est interprétable, mais les poids appris restent opaques.",
-    ),
-    "EMS_MLP": (
-        1,
-        "Réseau dense opaque : aucune règle interne lisible, explication seulement "
-        "post-hoc (gradient × entrée).",
-    ),
-    "EMS_LSTM": (
-        1,
-        "Réseau récurrent opaque : explication seulement post-hoc sur la fenêtre "
-        "temporelle (gradient × entrée).",
-    ),
-}
-
-
 # Les quatre familles comparées dans l'offre de stage 2SMART (objectif 5) :
 # règles fixes, ontologie seule, apprentissage seul, approche hybride.
 FAMILLES = {
-    "Règles fixes": ("EMS_power_limitation",),
-    "Ontologie seule": ("EMS_fuzzy_logic",),
-    "Apprentissage seul": ("EMS_MLP", "EMS_LSTM", "EMS_GNN"),
-    "Hybride neurosymbolique": ("EMS_MLP_neurosymbolic", "EMS_LSTM_neurosymbolic"),
+    ("Règles fixes", "Fixed rules"): ("EMS_power_limitation",),
+    ("Ontologie seule", "Ontology only"): ("EMS_fuzzy_logic",),
+    ("Apprentissage seul", "Learning only"): ("EMS_MLP", "EMS_LSTM", "EMS_GNN"),
+    ("Hybride neuro-symbolique", "Neuro-symbolic hybrid"): ("EMS_MLP_neurosymbolic", "EMS_LSTM_neurosymbolic"),
 }
 
 
 def famille(cle: str) -> str:
     """Famille d'une stratégie (clé interne) ; « — » si elle n'est pas classée."""
-    return next((f for f, membres in FAMILLES.items() if cle in membres), "—")
+    return next((lib(f) for f, membres in FAMILLES.items() if cle in membres), "—")
 
 
 # Même réseau, sans puis avec composante symbolique : c'est la comparaison qui
@@ -442,24 +336,3 @@ PAIRES_SYMBOLIQUE = (
     ("EMS_MLP", "EMS_MLP_neurosymbolic"),
     ("EMS_LSTM", "EMS_LSTM_neurosymbolic"),
 )
-
-
-def meilleure_strategie(metriques: dict, critere: str):
-    """Retourne (cle_strategie, valeur) de la meilleure stratégie selon le
-    critère choisi. Ignore les valeurs NaN.
-    """
-    if critere not in CRITERES:
-        raise ValueError(f"Critère inconnu : {critere}. Choix : {list(CRITERES)}")
-
-    metrique, sens = CRITERES[critere]
-    candidats = [
-        (nom, infos[metrique])
-        for nom, infos in metriques.items()
-        if metrique in infos and not np.isnan(infos[metrique])
-    ]
-    if not candidats:
-        return None, float("nan")
-
-    if sens == "min":
-        return min(candidats, key=lambda kv: kv[1])
-    return max(candidats, key=lambda kv: kv[1])

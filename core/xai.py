@@ -7,7 +7,7 @@ Trois outils, communs à toutes les pages :
    le filtre de sécurité) qu'elle choisirait dans une situation donnée, en
    pouvant modifier une grandeur (SOC, puissance demandée).
 
-2. Valeurs de Shapley EXACTES pour les réseaux opaques (MLP, LSTM, GNN), sans la
+2. Valeurs de Shapley EXACTES pour les réseaux de neurones (MLP, LSTM, GNN), sans la
    bibliothèque shap : avec 4 à 11 entrées, on évalue le réseau sur toutes les
    combinaisons d'entrées ; une entrée absente prend sa valeur de référence
    (moyenne sur le cycle ; état inactif pour un état symbolique). Propriété
@@ -25,34 +25,69 @@ import torch
 
 import ems_core as core
 from core import ontology_explainer as ox
+from core.i18n import lib
 
 
 ETATS_SYMBOLIQUES = set(ox.LIBELLES_SYMBOLIQUES)
 
+# Noms des grandeurs d'entrée des réseaux (français, anglais).
 LIBELLES_ENTREES = {
-    "SOC_EB": "SOC EB",
-    "SOC_PB": "SOC PB",
-    "hasPower": "Puissance demandée",
-    "speed": "Vitesse",
-    "hasAcceleration": "Accélération",
-    "hasTotalForce": "Force totale",
-    "I_EB": "Courant EB",
-    "high_power_demand": "Forte demande (symbolique)",
-    "regenerative_braking": "Freinage (symbolique)",
-    "zero_power_demand": "Demande nulle (symbolique)",
-    "converter_risk": "Convertisseur chargé (symbolique)",
+    "SOC_EB": ("SOC EB", "EB SOC"),
+    "SOC_PB": ("SOC PB", "PB SOC"),
+    "hasPower": ("Puissance demandée", "Power demand"),
+    "speed": ("Vitesse", "Speed"),
+    "hasAcceleration": ("Accélération", "Acceleration"),
+    "hasTotalForce": ("Force totale", "Total force"),
+    "I_EB": ("Courant de l'EB", "EB current"),
+    "high_power_demand": ("Forte demande (état de l'ontologie)", "High demand (ontology state)"),
+    "regenerative_braking": ("Freinage (état de l'ontologie)", "Braking (ontology state)"),
+    "zero_power_demand": ("Demande nulle (état de l'ontologie)", "Zero demand (ontology state)"),
+    "converter_risk": ("Convertisseur chargé (état de l'ontologie)", "Converter heavily loaded (ontology state)"),
 }
 
+
+def libelle_entree(col: str) -> str:
+    """Nom lisible d'une grandeur d'entrée, dans la langue choisie."""
+    return lib(LIBELLES_ENTREES[col]) if col in LIBELLES_ENTREES else col
+
+
 # E1 transparence et E2 traçabilité : propriétés de l'architecture, déclarées.
-# 3 = directe, 2 = décomposable (règles + partie opaque bornée), 1 = indirecte.
+# 3 = directe, 2 = décomposable (règles + partie apprise bornée), 1 = indirecte.
 TRANSPARENCE = {
-    "EMS_power_limitation": (3, "directe : équations et seuils physiques", "native : la branche appliquée"),
-    "EMS_fuzzy_logic": (3, "directe : règles SI … ALORS explicites", "native : contribution exacte de chaque règle"),
-    "EMS_MLP_neurosymbolic": (2, "décomposable : règles floues + correction bornée + garde-fou symbolique", "exacte pour les règles et le garde-fou ; la correction reste opaque"),
-    "EMS_MLP": (1, "indirecte : réseau dense", "reconstruite : valeurs de Shapley"),
-    "EMS_LSTM": (1, "indirecte : réseau récurrent", "reconstruite : valeurs de Shapley sur l'historique"),
-    "EMS_LSTM_neurosymbolic": (1, "indirecte : réseau récurrent à entrées symboliques", "reconstruite : valeurs de Shapley, entrées symboliques nommées"),
-    "EMS_GNN": (1, "indirecte : réseau sur graphe", "reconstruite : valeurs de Shapley"),
+    "EMS_power_limitation": (
+        3, ("directe : équations et seuils physiques", "direct: physical equations and thresholds"),
+        ("immédiate : la règle appliquée", "immediate: the rule applied"),
+    ),
+    "EMS_fuzzy_logic": (
+        3, ("directe : règles SI … ALORS explicites", "direct: explicit IF … THEN rules"),
+        ("exacte : contribution de chaque règle", "exact: contribution of each rule"),
+    ),
+    "EMS_MLP_neurosymbolic": (
+        2, ("décomposable : règles floues + correction limitée + garde-fou de l'ontologie",
+            "decomposable: fuzzy rules + limited correction + ontology safeguard"),
+        ("exacte pour les règles et le garde-fou ; la correction n'est pas lisible",
+         "exact for the rules and the safeguard; the correction cannot be read"),
+    ),
+    "EMS_MLP": (
+        1, ("indirecte : réseau de neurones", "indirect: neural network"),
+        ("reconstruite : contribution de chaque grandeur (méthode de Shapley)",
+         "reconstructed: contribution of each quantity (Shapley method)"),
+    ),
+    "EMS_LSTM": (
+        1, ("indirecte : réseau de neurones à mémoire", "indirect: neural network with memory"),
+        ("reconstruite sur les dernières secondes (méthode de Shapley)",
+         "reconstructed over the last seconds (Shapley method)"),
+    ),
+    "EMS_LSTM_neurosymbolic": (
+        1, ("indirecte : réseau à mémoire, avec des états de l'ontologie en entrée",
+            "indirect: network with memory, with ontology states as inputs"),
+        ("reconstruite (méthode de Shapley) ; les états de l'ontologie y sont nommés",
+         "reconstructed (Shapley method); the ontology states are named in it"),
+    ),
+    "EMS_GNN": (
+        1, ("indirecte : réseau de neurones sur le schéma du HESS", "indirect: neural network on the HESS diagram"),
+        ("reconstruite (méthode de Shapley)", "reconstructed (Shapley method)"),
+    ),
 }
 
 SHAPLEY_DISPONIBLE = {"EMS_MLP", "EMS_LSTM", "EMS_LSTM_neurosymbolic", "EMS_GNN"}
@@ -287,6 +322,19 @@ CONTRAINTES_PHYSIQUES = [
     ("SOC_EB", 0.05, -1, "plus de charge dans l'EB ne doit pas augmenter la puissance de la PB"),
     ("hasPower", 1000.0, +1, "une demande de traction plus forte ne doit pas réduire la puissance de la PB"),
 ]
+# Les résultats de E3 sont indexés par l'énoncé français ; sa traduction :
+ENONCES_EN = {
+    "plus de charge dans la PB ne doit pas réduire la puissance de la PB":
+        "more charge in the PB must not reduce the PB power",
+    "plus de charge dans l'EB ne doit pas augmenter la puissance de la PB":
+        "more charge in the EB must not increase the PB power",
+    "une demande de traction plus forte ne doit pas réduire la puissance de la PB":
+        "a higher traction demand must not reduce the PB power",
+}
+
+
+def libelle_contrainte(enonce: str) -> str:
+    return lib((enonce, ENONCES_EN.get(enonce, enonce)))
 TOLERANCE = 0.01  # en part de la demande (1 %)
 
 

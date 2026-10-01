@@ -1,160 +1,177 @@
 """
-core/verdict.py — Désigner le meilleur modèle en tenant compte de tous les critères.
+core/verdict.py — Quelle stratégie retenir, tous critères confondus ?
 
-Protocole de comparaison : mêmes conditions pour toutes les stratégies (même
-cycle, mêmes batteries, même convertisseur, même filtre), puis huit métriques.
+La conclusion ne fusionne pas les critères dans une note arbitraire. Elle suit
+trois étapes, les mêmes pour toutes les stratégies :
 
-- M5 respect des contraintes et M6 suivi de puissance sont ÉLIMINATOIRES : une
-  stratégie qui viole les limites ou ne fournit pas la puissance demandée
-  paraîtrait sinon plus sobre (M1) et plus efficace (M2) qu'elle ne l'est.
-- M1 énergie consommée, M2 rendement du HESS, M3 équilibrage des SOC, M4 pertes
-  du convertisseur et M8 sollicitation des batteries (durée de vie) départagent
-  les stratégies restantes. M8 n'était pas dans la proposition initiale : sans
-  lui, le protocole favoriserait les stratégies qui usent la PB.
-- M7 explicabilité : transparence et traçabilité (déclarées par architecture),
-  cohérence physique des décisions (mesurée par core/xai.py).
+1. Condition préalable (M5, M6) : une stratégie doit fournir toute la puissance
+   demandée et respecter les limites. Sinon elle est écartée : ne pas servir la
+   demande fait mécaniquement baisser l'énergie consommée et les pertes, ses
+   autres chiffres seraient donc flattés.
+2. Comparaison deux à deux sur chaque critère restant : une stratégie marque un
+   point quand elle fait mieux qu'une autre d'un écart supérieur au seuil
+   d'indifférence du critère, et en perd un quand elle fait moins bien. Son score
+   est la moyenne de (comparaisons gagnées − perdues), entre −1 et +1.
+3. Sensibilité aux poids : le score suppose des critères de même importance. On
+   tire donc un grand nombre de jeux de poids au hasard et on compte dans quelle
+   part d'entre eux chaque stratégie arrive en tête.
 
-Le verdict ne fusionne pas les métriques en un score arbitraire ; il suit
-quatre étapes d'aide à la décision multicritère :
-1. critères éliminatoires (M5, M6) ;
-2. dominance : A domine B s'il est au moins aussi bon partout et meilleur au
-   moins une fois — vrai quelle que soit la pondération ;
-3. comparaison deux à deux avec seuils d'indifférence (PROMETHEE II) ;
-4. robustesse (SMAA) : part des pondérations aléatoires où chaque stratégie est première.
+(Dans la littérature : comparaison par paires à seuils de type PROMETHEE II,
+et analyse de robustesse de type SMAA.)
 """
 
 import numpy as np
 
+from core.i18n import lib
+from core.xai import TRANSPARENCE
 
 
-def _c(cle, libelle, objectif, sens, seuil, relatif, justification, unite="", echelle=1.0, fmt="{:.1f}"):
-    return {
-        "cle": cle, "libelle": libelle, "objectif": objectif, "sens": sens, "seuil": seuil,
-        "relatif": relatif, "justification": justification, "unite": unite, "echelle": echelle, "fmt": fmt,
-    }
+def _c(cle, libelle, famille, sens, seuil, relatif, seuil_txt):
+    return {"cle": cle, "libelle": libelle, "famille": famille, "sens": sens,
+            "seuil": seuil, "relatif": relatif, "seuil_txt": seuil_txt}
 
 
-# Métriques principales du protocole (M1 à M4, M8).
-CRITERES_PRINCIPAUX = [
-    _c("energie_km_wh", "M1 · Énergie consommée", "Rendement global", "min", 0.01, True,
-       "1 % (énergie tirée des batteries, pertes estimées comprises)", "Wh/km"),
-    _c("rendement_hess", "M2 · Rendement du HESS", "Rendement global", "max", 0.001, False,
-       "0,1 point de rendement", "%", 100.0, "{:.2f}"),
-    _c("rmse_delta_soc", "M3 · Équilibrage des SOC", "Équilibre des batteries", "min", 0.01, False,
-       "1 point de SOC (écart quadratique moyen entre SOC_EB et SOC_PB)", "pts", 100.0),
-    _c("pertes_convertisseur_wh", "M4 · Pertes du convertisseur", "Pertes du convertisseur", "min", 0.05, True,
-       "5 % (pertes estimées avec un rendement constant)", "Wh", 1.0, "{:.0f}"),
-    _c("i_eb_rms", "M8 · Courant efficace EB", "Durée de vie", "min", 0.5, False, "0,5 A", "A"),
-    _c("i_pb_rms", "M8 · Courant efficace PB", "Durée de vie", "min", 0.5, False, "0,5 A", "A"),
+# Critères qui départagent les stratégies : (français, anglais) pour les textes.
+CRITERES = [
+    _c("energie_km_wh", ("M1 · Énergie consommée", "M1 · Energy consumed"), "performance", "min", 0.01, True,
+       ("1 % de l'énergie consommée", "1 % of the energy consumed")),
+    _c("rendement_hess", ("M2 · Rendement du HESS", "M2 · HESS efficiency"), "performance", "max", 0.001, False,
+       ("0,1 point de rendement", "0.1 efficiency point")),
+    _c("rmse_delta_soc", ("M3 · Écart entre les SOC", "M3 · Gap between SOCs"), "performance", "min", 0.01, False,
+       ("1 point de SOC", "1 SOC point")),
+    _c("pertes_convertisseur_wh", ("M4 · Pertes du convertisseur", "M4 · Converter losses"), "performance", "min", 0.05, True,
+       ("5 % des pertes", "5 % of the losses")),
+    _c("transparence", ("E1–E2 · Lisibilité de la décision", "E1–E2 · Readability of the decision"), "explicabilite",
+       "max", 0.5, False, ("un niveau (directe, décomposable, indirecte)", "one level (direct, decomposable, indirect)")),
+    _c("coherence_physique", ("E3 · Cohérence physique", "E3 · Physical consistency"), "explicabilite", "max", 0.05, False,
+       ("5 points de pourcentage", "5 percentage points")),
 ]
 
-# Critères complémentaires, proposés en option.
-CRITERES_COMPLEMENTAIRES = [
-    _c("nb_corrections", "Corrections du filtre", "Cohérence physique", "min", 0.05, True,
-       "5 % du nombre de corrections", "", 1.0, "{:.0f}"),
-    _c("cout_physique_moyen", "Coût physique", "Rendement global", "min", 0.01, True,
-       "1 % du coût multicritère du filtre", "", 1.0, "{:.4f}"),
-    _c("soc_eb_final", "SOC final EB", "Préservation des batteries", "max", 0.01, False, "1 point de SOC", "%", 100.0),
-    _c("soc_pb_final", "SOC final PB", "Préservation des batteries", "max", 0.01, False, "1 point de SOC", "%", 100.0),
-]
-
-# M7 — Explicabilité : E1 transparence et E2 traçabilité (propriétés de
-# l'architecture, déclarées) ; E3 cohérence physique (mesurée par core/xai.py
-# et injectée dans les métriques sous la clé « coherence_physique »).
-CRITERES_EXPLICABILITE = [
-    _c("transparence", "M7a · Transparence et traçabilité (E1, E2)", "Explicabilité", "max", 0.5, False,
-       "un niveau d'écart (directe, décomposable, indirecte) — déclaré", "", 1.0, "{:.0f}"),
-    _c("coherence_physique", "M7b · Cohérence physique (E3)", "Explicabilité", "max", 0.05, False,
-       "5 points de pourcentage d'instants cohérents — mesuré", "%", 100.0, "{:.0f}"),
-]
-
-# Métriques éliminatoires, affichées dans la matrice.
-ELIMINATOIRES = [
-    _c("nb_violations", "M5 · Violations de SOC", "Respect des contraintes", "min", 0, False, "doit valoir 0", "", 1.0, "{:.0f}"),
-    _c("nb_violations_courant", "M5 · Violations de courant", "Respect des contraintes", "min", 0, False, "doit valoir 0", "", 1.0, "{:.0f}"),
-    _c("rmse_puissance_kw", "M6 · Suivi de puissance (RMSE)", "Suivi de puissance", "min", 0, False, "doit valoir 0", "kW", 1.0, "{:.2f}"),
-]
-
-SEUIL_ROBUSTE = 0.70
+NB_TIRAGES = 5000
 
 
-def valeur(metriques, n, cle):
-    if cle == "transparence":
-        from core.xai import TRANSPARENCE
-        return float(TRANSPARENCE.get(n, (0, "", ""))[0])
-    return float(metriques[n].get(cle, float("nan")))
+def criteres(avec_explicabilite=True):
+    return [c for c in CRITERES if avec_explicabilite or c["famille"] == "performance"]
 
 
-def eliminer(metriques):
-    """(retenues, {stratégie éliminée: raison}) selon M5 et M6."""
-    exclues = {}
-    for n, m in metriques.items():
-        raisons = []
-        if m.get("rmse_puissance_kw", 0.0) > 1e-3 or m.get("energie_non_servie_wh", 0.0) >= 1.0:
-            raisons.append(
-                f"M6, demande non suivie : {m.get('energie_non_servie_wh', 0.0):.0f} Wh non fournis, "
-                f"jusqu'à {m.get('ecart_puissance_max_kw', 0.0):.1f} kW manquants à un instant"
-            )
-        viol = m.get("nb_violations", 0) + m.get("nb_violations_courant", 0)
-        if viol > 0:
-            raisons.append(f"M5, {viol} violation(s) de contrainte")
-        if raisons:
-            exclues[n] = " ; ".join(raisons)
-    return [n for n in metriques if n not in exclues], exclues
+def libelle(critere) -> str:
+    return lib(critere["libelle"])
 
 
-def preference(metriques, a, b, crit):
-    """+1 si a est meilleur que b au-delà du seuil, −1 s'il est moins bon, 0 sinon."""
-    va, vb = valeur(metriques, a, crit["cle"]), valeur(metriques, b, crit["cle"])
-    seuil = crit["seuil"] * abs(vb) if crit["relatif"] else crit["seuil"]
-    ecart = (va - vb) if crit["sens"] == "max" else (vb - va)
+def completer(metriques, coherence=None):
+    """Ajoute aux métriques les deux critères d'explicabilité : le niveau de
+    lisibilité (propriété de l'architecture) et la cohérence physique mesurée."""
+    for nom, m in metriques.items():
+        m["transparence"] = float(TRANSPARENCE.get(nom, (0,))[0])
+        mesure = (coherence or {}).get(nom)
+        m["coherence_physique"] = float(mesure[0]) if mesure else float("nan")
+    return metriques
+
+
+def ecartees(metriques):
+    """{stratégie: (énergie non fournie en Wh, nombre de dépassements de limite)}
+    pour les stratégies qui ne remplissent pas la condition préalable."""
+    sortie = {}
+    for nom, m in metriques.items():
+        non_fourni = float(m.get("energie_non_servie_wh", 0.0))
+        depassements = int(m.get("nb_violations", 0) + m.get("nb_violations_courant", 0))
+        if non_fourni >= 1.0 or m.get("rmse_puissance_kw", 0.0) > 1e-3 or depassements > 0:
+            sortie[nom] = (non_fourni, depassements)
+    return sortie
+
+
+def preference(metriques, a, b, critere):
+    """+1 si a fait mieux que b au-delà du seuil d'indifférence, −1 s'il fait
+    moins bien, 0 sinon (y compris quand une valeur manque)."""
+    va, vb = metriques[a].get(critere["cle"], float("nan")), metriques[b].get(critere["cle"], float("nan"))
+    seuil = critere["seuil"] * abs(vb) if critere["relatif"] else critere["seuil"]
+    ecart = (va - vb) if critere["sens"] == "max" else (vb - va)
     return 1 if ecart > seuil else (-1 if ecart < -seuil else 0)
 
 
-def flux_par_critere(metriques, strategies, criteres):
-    """Matrice (stratégies × critères) des flux nets : victoires moins défaites,
+def bilans(metriques, strategies, liste_criteres):
+    """Matrice (stratégies × critères) : comparaisons gagnées moins perdues,
     divisées par le nombre d'adversaires. Entre −1 et +1."""
     n = len(strategies)
     if n < 2:
-        return np.zeros((n, len(criteres)))
-    return np.array(
-        [
-            [sum(preference(metriques, a, b, c) for b in strategies if b != a) / (n - 1) for c in criteres]
-            for a in strategies
-        ]
-    )
+        return np.zeros((n, len(liste_criteres)))
+    return np.array([
+        [sum(preference(metriques, a, b, c) for b in strategies if b != a) / (n - 1) for c in liste_criteres]
+        for a in strategies
+    ])
 
 
-def dominances(metriques, strategies, criteres):
-    """[(a, b)] : a domine b."""
-    return [
-        (a, b)
-        for a in strategies for b in strategies
-        if a != b
-        and all(preference(metriques, a, b, c) >= 0 for c in criteres)
-        and any(preference(metriques, a, b, c) == 1 for c in criteres)
-    ]
+def _poids(nb_criteres, graine=0):
+    return np.random.default_rng(graine).dirichlet(np.ones(nb_criteres), NB_TIRAGES)
 
 
-def bilan_paires(metriques, strategies, criteres):
-    """{(a, b): (critères où a est meilleur, critères où a est moins bon)}."""
+def _part_en_tete(scores_par_tirage):
+    """Part des tirages où chaque stratégie a le meilleur score (les ex æquo se partagent le tirage)."""
+    meilleurs = np.isclose(scores_par_tirage, scores_par_tirage.max(axis=1, keepdims=True))
+    return (meilleurs / meilleurs.sum(axis=1, keepdims=True)).mean(axis=0)
+
+
+def evaluer(metriques, liste_criteres, strategies=None):
+    """Étapes 1 à 3 sur une évaluation (un cycle). `strategies` restreint la
+    comparaison à une liste donnée ; sinon, toutes celles qui remplissent la
+    condition préalable.
+
+    Retourne {retenues, ecartees, bilans, score, en_tete} ; `score` et `en_tete`
+    sont des dictionnaires {stratégie: valeur}.
+    """
+    exclues = ecartees(metriques)
+    retenues = [n for n in metriques if n not in exclues] if strategies is None else list(strategies)
+    matrice = bilans(metriques, retenues, liste_criteres)
+    if len(retenues) == 0:
+        return {"retenues": [], "ecartees": exclues, "bilans": matrice, "score": {}, "en_tete": {}}
+    en_tete = _part_en_tete(_poids(len(liste_criteres)) @ matrice.T)
     return {
-        (a, b): (
-            [c["libelle"] for c in criteres if preference(metriques, a, b, c) == 1],
-            [c["libelle"] for c in criteres if preference(metriques, a, b, c) == -1],
-        )
-        for a in strategies for b in strategies if a != b
+        "retenues": retenues,
+        "ecartees": exclues,
+        "bilans": matrice,
+        "score": dict(zip(retenues, matrice.mean(axis=1))),
+        "en_tete": dict(zip(retenues, en_tete)),
     }
 
 
-def robustesse(flux, n_tirages=5000, graine=0):
-    """Part des pondérations aléatoires (uniformes sur le simplexe) où chaque
-    stratégie est première, et son rang moyen."""
-    n, k = flux.shape
-    if n == 0 or k == 0:
-        return np.zeros(n), np.zeros(n)
-    poids = np.random.default_rng(graine).dirichlet(np.ones(k), n_tirages)
-    scores = poids @ flux.T
-    premiers = np.bincount(scores.argmax(axis=1), minlength=n) / n_tirages
-    rangs = (-scores).argsort(axis=1).argsort(axis=1) + 1
-    return premiers, rangs.mean(axis=0)
+def conclure(evaluations, liste_criteres):
+    """Conclusion sur plusieurs évaluations {nom: métriques} (les cycles).
+
+    Seules les stratégies qui remplissent la condition préalable sur TOUTES les
+    évaluations sont comparées entre elles ; leur score est la moyenne de leurs
+    scores sur chaque évaluation.
+
+    Retourne {communes, score, en_tete, par_evaluation} ; `par_evaluation` donne,
+    pour chaque évaluation, le résultat de `evaluer` restreint aux stratégies communes.
+    """
+    toutes = list(next(iter(evaluations.values()))) if evaluations else []
+    communes = [n for n in toutes if all(n in m and n not in ecartees(m) for m in evaluations.values())]
+    par_evaluation = {nom: evaluer(m, liste_criteres, communes) for nom, m in evaluations.items()}
+    if not communes:
+        return {"communes": [], "score": {}, "en_tete": {}, "par_evaluation": par_evaluation}
+    moyenne = np.mean([r["bilans"] for r in par_evaluation.values()], axis=0)
+    return {
+        "communes": communes,
+        "score": dict(zip(communes, moyenne.mean(axis=1))),
+        "en_tete": dict(zip(communes, _part_en_tete(_poids(len(liste_criteres)) @ moyenne.T))),
+        "par_evaluation": par_evaluation,
+    }
+
+
+def meilleures(score, tolerance=0.02):
+    """Stratégies en tête d'un dictionnaire de scores (ex æquo à `tolerance` près), meilleure d'abord."""
+    if not score:
+        return []
+    maxi = max(score.values())
+    return [n for n, s in sorted(score.items(), key=lambda kv: -kv[1]) if s >= maxi - tolerance]
+
+
+def points_forts(metriques, strategie, strategies, liste_criteres):
+    """Critères sur lesquels `strategie` n'est battue par aucune autre et en bat au moins une."""
+    autres = [n for n in strategies if n != strategie]
+    return [
+        c for c in liste_criteres
+        if autres
+        and all(preference(metriques, strategie, b, c) >= 0 for b in autres)
+        and any(preference(metriques, strategie, b, c) == 1 for b in autres)
+    ]

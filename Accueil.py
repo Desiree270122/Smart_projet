@@ -10,12 +10,14 @@ l'utilisateur, et non la technologie sous-jacente :
     3. Analyser les résultats
     4. Comprendre les décisions de l'intelligence artificielle
 
-Chaque page est implémentée dans le dossier `vues/`.
+Chaque page est implémentée dans le dossier `vues/`. L'interface est en
+français ou en anglais (core/i18n.py).
 """
 
 import streamlit as st
 
-from core.resultats import CLE_CYCLE, CLE_CYCLE_DEMANDE, cycles_disponibles
+from core.i18n import CLE_LANGUE, LANGUES, langue_du_navigateur, lib, tr
+from core.navigation import SECTIONS, titre
 
 
 st.set_page_config(
@@ -24,53 +26,35 @@ st.set_page_config(
 )
 
 
-# Cycle dont toutes les pages affichent les résultats. Une page peut demander
-# un autre cycle (après une simulation) : la demande est appliquée ici, avant
-# la création du widget, comme l'exige Streamlit.
 with st.sidebar:
-    if CLE_CYCLE_DEMANDE in st.session_state:
-        st.session_state[CLE_CYCLE] = st.session_state.pop(CLE_CYCLE_DEMANDE)
-    _cycles = cycles_disponibles(st)
-    if _cycles:
-        if st.session_state.get(CLE_CYCLE) not in _cycles:
-            st.session_state[CLE_CYCLE] = next(iter(_cycles))
-        st.selectbox(
-            "Cycle étudié", list(_cycles), format_func=_cycles.get, key=CLE_CYCLE,
-            help="Toutes les pages d'analyse affichent les résultats de ce cycle.",
-        )
+    # Langue de l'interface au premier affichage : celle demandée dans le lien
+    # (…/?lang=en, pratique pour partager l'application), sinon celle du navigateur.
+    if CLE_LANGUE not in st.session_state:
+        demandee = str(st.query_params.get("lang", "")).lower()
+        st.session_state[CLE_LANGUE] = demandee if demandee in LANGUES else langue_du_navigateur()
+    st.radio(
+        "🌐 Langue / Language", list(LANGUES), format_func=LANGUES.get, key=CLE_LANGUE, horizontal=True,
+    )
 
-# En-tête de la barre latérale (identité de l'application).
-with st.sidebar:
+    # Identité de l'application.
     st.markdown(
         "<div style='font-size:1.5rem;font-weight:800;letter-spacing:-.5px;"
         "background:linear-gradient(90deg,#3B82F6,#22C55E);-webkit-background-clip:text;"
         "-webkit-text-fill-color:transparent;color:#3B82F6'>2SMART</div>"
-        "<div style='color:#94A3B8;font-size:.82rem'>Gestion intelligente de l'énergie</div>"
-        "<div style='color:#94A3B8;font-size:.72rem;margin-bottom:.4rem'>Version 2.0</div>",
+        "<div style='color:#94A3B8;font-size:.82rem'>"
+        + tr("Gestion intelligente de l'énergie", "Smart energy management")
+        + "</div><div style='color:#94A3B8;font-size:.72rem;margin-bottom:.4rem'>Version 2.0</div>",
         unsafe_allow_html=True,
     )
 
 
 # Menu organisé par sections, libellé par ce que l'utilisateur veut faire.
-# Les clés deviennent des séparateurs de section dans la barre latérale ;
-# la section vide ("") place l'accueil tout en haut, sans titre de section.
+# La section vide place le tableau de bord tout en haut, sans titre de section.
 menu = {
-    "": [
-        st.Page("vues/1_Accueil.py", title="🏠 Tableau de bord", default=True),
-    ],
-    "📈 Simulation": [
-        st.Page("vues/2_Preparation_donnees.py", title="📂 Préparer une simulation"),
-        st.Page("vues/8_Simulation_cycle_personnalise.py", title="▶️ Lancer une simulation"),
-        st.Page("vues/6_Resultats_et_Analyse.py", title="📈 Résultats de simulation"),
-    ],
-    "⚖️ Comparaison": [
-        st.Page("vues/5_Comparaison_des_strategies.py", title="📊 Comparaison des stratégies EMS"),
-    ],
-    "🔍 Explication": [
-        st.Page("vues/7_Explicabilite.py", title="💡 Pourquoi cette décision ?"),
-        st.Page("vues/9_Architecture_des_modeles.py", title="🧠 Architecture des stratégies EMS"),
-        st.Page("vues/3_Ontologie_OntoHESS.py", title="📚 Base de connaissances"),
-    ],
+    lib(section): [
+        st.Page(page, title=titre(page), default=(page == "vues/1_Accueil.py")) for page in pages
+    ]
+    for section, pages in SECTIONS
 }
 
 st.navigation(menu).run()
