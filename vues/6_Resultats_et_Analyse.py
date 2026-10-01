@@ -10,7 +10,7 @@ from pathlib import Path
 DOSSIER_PROJET = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_PROJET))
 
-__________________________________________________import numpy as np
+import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
