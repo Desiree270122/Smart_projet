@@ -7,16 +7,19 @@ sys.path.insert(0, str(DOSSIER_PROJET))
 
 import math
 
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import numpy as np
 import pandas as pd
 import streamlit as st
+from core.format import SEPARATEURS_PLOTLY, nombre
 
 import ems_core as core
 from ems_core import (
     simuler_strategie_deterministe,
     eb_priority_alpha_single,
 )
+from core.style import COULEUR_DEMANDE, COULEUR_EB, COULEUR_PB, COULEUR_VIOLATION
 
 
 # Configuration de page gérée par le routeur Accueil.py.
@@ -340,7 +343,7 @@ with st.form(key="prep_form"):
             st.caption(
                 f"Unité détectée automatiquement : **{unite_detectee}** "
                 f"(vitesse maximale ≈ "
-                f"{pd.Series(valeurs_vitesse).abs().max():.1f} "
+                f"{nombre(pd.Series(valeurs_vitesse).abs().max(), 1)} "
                 f"dans l'unité d'origine)."
             )
 
@@ -477,7 +480,7 @@ with st.form(key="prep_form"):
         type="primary",
     )
 
-if not valide and "cycle_pret" not in st.session_state:
+if not valide and "cycle_prepare" not in st.session_state:
     st.stop()
 
 if valide:
@@ -611,7 +614,9 @@ if valide:
             ) * pas_de_temps_s,
         )
 
-    st.session_state["cycle_pret"] = df_cycle
+    # Le cycle préparé reste à part : les résultats affichés ailleurs gardent
+    # leur propre cycle tant qu'une simulation n'a pas été lancée sur celui-ci.
+    st.session_state["cycle_prepare"] = df_cycle
 
     st.session_state["prep_meta"] = {
         "n_points": len(df_cycle),
@@ -627,10 +632,10 @@ if valide:
         f"Données préparées : {len(df_cycle)} points au total."
     )
 
-if "cycle_pret" not in st.session_state:
+if "cycle_prepare" not in st.session_state:
     st.stop()
 
-df_cycle = st.session_state["cycle_pret"]
+df_cycle = st.session_state["cycle_prepare"]
 
 meta = st.session_state.get(
     "prep_meta",
@@ -810,13 +815,13 @@ resultats_conv = core.compute_converter_characteristics(conv_n_composants, conv_
 core.set_converter_power_limits(resultats_conv["p_decharge_W"], resultats_conv["p_recharge_W"])
 
 col_res1, col_res2 = st.columns(2)
-col_res1.metric("Puissance totale décharge", f"{resultats_conv['p_decharge_W']:.0f} W")
-col_res2.metric("Puissance totale recharge", f"{resultats_conv['p_recharge_W']:.0f} W")
+col_res1.metric("Puissance totale décharge", f"{nombre(resultats_conv['p_decharge_W'], 0)} W")
+col_res2.metric("Puissance totale recharge", f"{nombre(resultats_conv['p_recharge_W'], 0)} W")
 
 st.caption(
     f"Ces {int(conv_n_composants)} composant(s) définissent les bornes "
-    f"P_CONV_MIN_W = {resultats_conv['p_recharge_W']:.0f} W et "
-    f"P_CONV_MAX_W = {resultats_conv['p_decharge_W']:.0f} W réellement utilisées "
+    f"P_CONV_MIN_W = {nombre(resultats_conv['p_recharge_W'], 0)} W et "
+    f"P_CONV_MAX_W = {nombre(resultats_conv['p_decharge_W'], 0)} W réellement utilisées "
     f"par le filtre de sécurité physique dans toutes les simulations qui suivent."
 )
 
@@ -925,70 +930,44 @@ else:
 
 st.subheader("Aperçu général du cycle")
 
-fig_brut, axes_brut = plt.subplots(
-    1,
-    2,
-    figsize=(12, 4),
+temps_min_cycle = df_cycle["time"].to_numpy(dtype=float) / 60.0
+fig_brut = make_subplots(
+    rows=1, cols=2, horizontal_spacing=0.08,
+    subplot_titles=(
+        "Vitesse (km/h)" if "speed" in df_cycle.columns else "Accélération (m/s²)",
+        "Puissance demandée (kW)",
+    ),
 )
-
-if "speed" in df_cycle.columns:
-    axes_brut[0].plot(
-        df_cycle["time"],
-        df_cycle["speed"],
-    )
-
-    axes_brut[0].set_title(
-        "Vitesse (m/s)"
-    )
-
-else:
-    axes_brut[0].plot(
-        df_cycle["time"],
-        df_cycle["hasAcceleration"],
-    )
-
-    axes_brut[0].set_title(
-        "Accélération"
-    )
-
-axes_brut[0].set_xlabel(
-    "Temps (s)"
+fig_brut.add_trace(
+    go.Scattergl(
+        x=temps_min_cycle,
+        y=df_cycle["speed"] * 3.6 if "speed" in df_cycle.columns else df_cycle["hasAcceleration"],
+        line=dict(color=COULEUR_DEMANDE, width=1.2), hovertemplate="%{y:.1f}<extra></extra>",
+    ),
+    row=1, col=1,
 )
-
-axes_brut[1].plot(
-    df_cycle["time"],
-    df_cycle["hasPower"],
+fig_brut.add_trace(
+    go.Scattergl(
+        x=temps_min_cycle, y=df_cycle["hasPower"] / 1000.0,
+        line=dict(color=COULEUR_DEMANDE, width=1.2), hovertemplate="%{y:.1f} kW<extra></extra>",
+    ),
+    row=1, col=2,
 )
-
-axes_brut[1].set_title(
-    "Puissance demandée (W)"
-)
-
-axes_brut[1].set_xlabel(
-    "Temps (s)"
-)
-
-plt.tight_layout()
-
-st.pyplot(
-    fig_brut
-)
-
-plt.close(
-    fig_brut
-)
+fig_brut.update_xaxes(title_text="Temps (min)")
+fig_brut.update_layout(separators=SEPARATEURS_PLOTLY, height=320, showlegend=False, margin=dict(t=40, b=40, l=10, r=10), hovermode="x unified")
+st.plotly_chart(fig_brut, width="stretch")
 
 st.subheader(
     "Aperçu indicatif — SOC, puissances et courants "
-    "(référence : EMS_power_limitation)"
+    "(référence : modèle physique)"
 )
 
 st.write(
-    "Ce calcul utilise la stratégie EMS_power_limitation, qui reste disponible "
+    "Ce calcul utilise le modèle physique (EMS power limitation), qui reste disponible "
     "sans poids entraînés, et reflète les paramètres batteries et convertisseur "
     "tels que configurés ci-dessus (blocs 7 à 9). Il fournit un premier aperçu "
     "du comportement du système sur ce cycle. La comparaison complète des sept "
-    "stratégies est présentée sur la page « Simulation globale »."
+    "stratégies se lance depuis la page « Lancer une simulation »."
 )
 
 col_soc0_1, col_soc0_2 = st.columns(2)
@@ -1024,98 +1003,34 @@ traj_apercu = simuler_strategie_deterministe(
     ),
 )
 
-fig_apercu, axes_apercu = plt.subplots(
-    3,
-    1,
-    figsize=(11, 9),
-    sharex=True,
+fig_apercu = make_subplots(
+    rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.06,
+    subplot_titles=("États de charge (%)", "Puissances (kW)", "Courants (A)"),
 )
-
-axes_apercu[0].plot(
-    df_cycle["time"],
-    traj_apercu["SOC_EB"][:-1],
-    label="SOC_EB",
+for nom_serie, cle_eb, cle_pb, echelle, ligne in (
+    ("SOC", "SOC_EB", "SOC_PB", 100.0, 1),
+    ("Puissance", "P_EB", "P_PB", 1 / 1000.0, 2),
+    ("Courant", "I_EB", "I_PB", 1.0, 3),
+):
+    for cle, nom_batterie, coul in ((cle_eb, "Batterie Énergie", COULEUR_EB), (cle_pb, "Batterie Puissance", COULEUR_PB)):
+        fig_apercu.add_trace(
+            go.Scattergl(
+                x=temps_min_cycle, y=np.asarray(traj_apercu[cle], dtype=float)[: len(df_cycle)] * echelle,
+                name=nom_batterie, legendgroup=nom_batterie, showlegend=ligne == 1,
+                line=dict(color=coul, width=1.2),
+            ),
+            row=ligne, col=1,
+        )
+fig_apercu.add_hline(y=core.SOC_EB_MIN * 100, line=dict(color=COULEUR_VIOLATION, dash="dot", width=1), row=1, col=1)
+fig_apercu.update_xaxes(title_text="Temps (min)", row=3, col=1)
+fig_apercu.update_layout(
+    separators=SEPARATEURS_PLOTLY, height=640, margin=dict(t=40, b=40, l=10, r=10), hovermode="x unified",
+    legend=dict(orientation="h", y=1.06, x=0),
 )
+st.plotly_chart(fig_apercu, width="stretch")
 
-axes_apercu[0].plot(
-    df_cycle["time"],
-    traj_apercu["SOC_PB"][:-1],
-    label="SOC_PB",
-)
-
-axes_apercu[0].set_ylabel(
-    "SOC"
-)
-
-axes_apercu[0].legend()
-
-axes_apercu[0].grid(
-    True,
-    alpha=0.3,
-)
-
-axes_apercu[1].plot(
-    df_cycle["time"],
-    traj_apercu["P_EB"],
-    label="P_EB",
-)
-
-axes_apercu[1].plot(
-    df_cycle["time"],
-    traj_apercu["P_PB"],
-    label="P_PB",
-)
-
-axes_apercu[1].set_ylabel(
-    "Puissance (W)"
-)
-
-axes_apercu[1].legend()
-
-axes_apercu[1].grid(
-    True,
-    alpha=0.3,
-)
-
-axes_apercu[2].plot(
-    df_cycle["time"],
-    traj_apercu["I_EB"],
-    label="I_EB",
-)
-
-axes_apercu[2].plot(
-    df_cycle["time"],
-    traj_apercu["I_PB"],
-    label="I_PB",
-)
-
-axes_apercu[2].set_ylabel(
-    "Courant (A)"
-)
-
-axes_apercu[2].set_xlabel(
-    "Temps (s)"
-)
-
-axes_apercu[2].legend()
-
-axes_apercu[2].grid(
-    True,
-    alpha=0.3,
-)
-
-plt.tight_layout()
-
-st.pyplot(
-    fig_apercu
-)
-
-plt.close(
-    fig_apercu
-)
-
-st.session_state["soc_eb0"] = soc_eb0_apercu
-st.session_state["soc_pb0"] = soc_pb0_apercu
+st.session_state["soc_eb0_prepare"] = soc_eb0_apercu
+st.session_state["soc_pb0_prepare"] = soc_pb0_apercu
 
 from core.navigation import pied_navigation
 

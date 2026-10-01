@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from core.format import SEPARATEURS_PLOTLY, nombre
 
 import ems_core as core
 from core import ontology_explainer as ox
@@ -84,7 +85,7 @@ def _graphe_connaissances(etat_actif):
         )
     )
     fig.update_layout(
-        height=380, margin=dict(t=10, b=10, l=10, r=10),
+        separators=SEPARATEURS_PLOTLY, height=380, margin=dict(t=10, b=10, l=10, r=10),
         xaxis=dict(visible=False, range=[-3.0, 2.8]), yaxis=dict(visible=False, range=[-1.9, 2.5]),
     )
     return fig
@@ -196,9 +197,9 @@ with st.expander("Afficher les détails techniques de l'ontologie"):
     _i_max_sim = core.P_EB_MAX_W / core.V_EB_PACK_NOM
     if _i_max_onto is not None and abs(float(_i_max_onto) - _i_max_sim) > 0.01 * _i_max_sim:
         st.warning(
-            f"Écart entre l'ontologie et la simulation : `iEB_max_value` vaut {float(_i_max_onto):.2f} A "
-            f"dans l'ontologie, alors que la simulation limite l'EB à {_i_max_sim:.1f} A "
-            f"({core.P_EB_MAX_W / 1000:.1f} kW). Les deux sources doivent être alignées."
+            f"Écart entre l'ontologie et la simulation : `iEB_max_value` vaut {nombre(float(_i_max_onto), 2)} A "
+            f"dans l'ontologie, alors que la simulation limite l'EB à {nombre(_i_max_sim, 1)} A "
+            f"({nombre(core.P_EB_MAX_W / 1000, 1)} kW). Les deux sources doivent être alignées."
         )
 
     st.markdown(f"**Relations** entre classes ({len(ox.relations_ontologie())})")
@@ -269,7 +270,7 @@ if "EMS_power_limitation" in _res and _df is not None:
         f"Les règles de répartition R13 à R17 décrivent exactement le {nom_affichage('EMS_power_limitation').lower()} : "
         f"sur les {_nb} instants du cycle où elles s'appliquent, la répartition qu'elles "
         f"prescrivent et celle demandée par cette stratégie diffèrent au plus de "
-        f"{_ecart.max() * 100:.2f} point."
+        f"{nombre(_ecart.max() * 100, 2)} point."
     )
 
 st.markdown("**Parcourir toutes les règles**")
@@ -357,7 +358,7 @@ with onglet_flou:
     with st.container(border=True):
         st.markdown(f"#### {rf['libelle']}")
         st.markdown(f"**Si** {rf['si']}")
-        st.markdown(f"**Alors** confier **{rf['alpha'] * 100:.0f} %** de la puissance à la PB, c'est-à-dire {rf['sens']}.")
+        st.markdown(f"**Alors** confier **{nombre(rf['alpha'] * 100, 0)} %** de la puissance à la PB, c'est-à-dire {rf['sens']}.")
         if rf["concepts"]:
             st.markdown(
                 "**Concepts de l'ontologie** : "
@@ -366,7 +367,7 @@ with onglet_flou:
     st.dataframe(
         pd.DataFrame(
             [
-                {"Règle": r["libelle"], "Si": r["si"], "Part de la PB": f"{r['alpha'] * 100:.0f} %"}
+                {"Règle": r["libelle"], "Si": r["si"], "Part de la PB": f"{nombre(r['alpha'] * 100, 0)} %"}
                 for r in floues
             ]
         ).set_index("Règle"),
@@ -376,7 +377,7 @@ with onglet_flou:
         st.markdown("\n".join(f"- **{t}** : {d}" for t, d in ox.termes_flous()))
         st.caption(
             f"Sans aucune règle activée, le moteur applique une répartition par défaut de "
-            f"{core.FUZZY_DEFAULT_ALPHA * 100:.0f} % pour la PB."
+            f"{nombre(core.FUZZY_DEFAULT_ALPHA * 100, 0)} % pour la PB."
         )
 
 
@@ -410,13 +411,18 @@ with ns1:
                     ("Entrées", COULEUR_REFERENCE),
                     ("Base floue", COULEUR_SECONDAIRE),
                     ("Décision symbolique", COULEUR_DECISION),
-                    (f"Correction MLP bornée (±{core.MLP_NS_MAX_DELTA * 100:.0f} pts)", COULEUR_SECONDAIRE),
+                    (f"Correction MLP bornée (±{nombre(core.MLP_NS_MAX_DELTA * 100, 0)} pts)", COULEUR_SECONDAIRE),
+                    ("Garde-fou R14/R16", COULEUR_REFERENCE),
                     ("Décision finale", COULEUR_DECISION),
                 ]
             ),
             unsafe_allow_html=True,
         )
-        st.caption("La décision se décompose exactement : part des règles + correction du réseau.")
+        st.caption(
+            "La décision se décompose exactement : part des règles + correction du réseau. "
+            f"Sous {nombre(core.MLP_NS_RESERVE_PB_SOC * 100, 0)} % de SOC de la PB, les règles R14 et R16 "
+            "reprennent la main en traction pour préserver sa réserve."
+        )
 with ns2:
     with st.container(border=True):
         st.markdown(f"**{nom_affichage('EMS_LSTM_neurosymbolic')}** · le symbolique informe le réseau")
@@ -465,8 +471,8 @@ with t_col:
         a = repart["alpha"]
         st.success(
             f"Répartition de référence (règle {repart['regle']['id']}) : batterie Énergie "
-            f"{p_test * (1 - a) / 1000:.1f} kW, batterie Puissance {p_test * a / 1000:.1f} kW "
-            f"(alpha = {a * 100:.0f} %)."
+            f"{nombre(p_test * (1 - a) / 1000, 1)} kW, batterie Puissance {nombre(p_test * a / 1000, 1)} kW "
+            f"(alpha = {nombre(a * 100, 0)} %)."
         )
     else:
         st.info("Demande quasi nulle : aucune règle de répartition ne s'applique.")

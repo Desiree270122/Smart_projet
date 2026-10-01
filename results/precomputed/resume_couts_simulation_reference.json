@@ -1,0 +1,9 @@
+{
+  "EMS_power_limitation": 2.328538347397339e-05,
+  "EMS_fuzzy_logic": 7.604221018472963e-05,
+  "EMS_MLP": 0.00026144265399784093,
+  "EMS_LSTM": 6.817675347839455e-08,
+  "EMS_LSTM_neurosymbolic": 8.304632290976188e-06,
+  "EMS_MLP_neurosymbolic": 0.0,
+  "EMS_GNN": 2.292363035568192e-05
+}

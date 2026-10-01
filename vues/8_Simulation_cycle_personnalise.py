@@ -18,11 +18,14 @@ sys.path.insert(0, str(DOSSIER_PROJET))
 
 import numpy as np
 import streamlit as st
+from core.format import SEPARATEURS_PLOTLY, nombre
 import torch
 
+import ems_core as core
 from ems_core import (
     simuler_toutes_strategies,
     set_alpha_grid_step,
+    set_pertes,
     load_mlp_simple,
     load_mlp_neurosymbolic,
     load_lstm_seul,
@@ -30,7 +33,10 @@ from ems_core import (
     load_gnn_simple,
     DT_SECONDS,
 )
-from core.resultats import FAMILLES, nom_affichage
+from core.resultats import (
+    CLE_PERSONNALISE, CYCLES_REFERENCE, FAMILLES, afficher_simulation_personnalisee,
+    charger_reference, nom_affichage,
+)
 from core.navigation import pied_navigation
 from core.style import flux_html, COULEUR_DECISION, COULEUR_EB, COULEUR_REFERENCE, COULEUR_SECONDAIRE
 from core import ontology_explainer as ox
@@ -54,22 +60,6 @@ COUT_CALCUL = {
     "EMS_LSTM_neurosymbolic": ("modéré", 1.5),
     "EMS_GNN": ("lent", 3.0),
 }
-
-CLES_RESULTATS_A_SUPPRIMER = [
-    "resultats_simulation",
-    "avertissements_simulation",
-    "signature_simulation",
-    "modele_actif",
-    "alpha_star_reference",
-    "erreurs_chargement",
-    "_sim_custom_faite",
-]
-
-
-def supprimer_anciens_resultats():
-    for cle in CLES_RESULTATS_A_SUPPRIMER:
-        st.session_state.pop(cle, None)
-
 
 @st.cache_resource(show_spinner=False)
 def _charger_modeles_deterministes():
@@ -114,14 +104,26 @@ def _charger_modeles(avec_gnn):
 
 
 @st.cache_data(show_spinner=False)
-def _simuler_en_cache(df, soc_eb0, soc_pb0, signature_modeles, pas_alpha, _modeles_charges):
+def _simuler_en_cache(df, soc_eb0, soc_pb0, signature_modeles, pas_alpha, pertes, _modeles_charges):
+    # Réglages globaux du moteur : posés pour ce calcul, puis remis par défaut,
+    # pour ne pas déteindre sur les autres sessions du même serveur.
     set_alpha_grid_step(pas_alpha)
-    with torch.inference_mode():
-        return simuler_toutes_strategies(df, soc_eb0, soc_pb0, _modeles_charges)
+    set_pertes(*pertes)
+    try:
+        with torch.inference_mode():
+            return simuler_toutes_strategies(df, soc_eb0, soc_pb0, _modeles_charges)
+    finally:
+        set_pertes(False)
+        set_alpha_grid_step(core.ALPHA_GRID_STEP_DEFAUT)
+
+
+@st.cache_data(show_spinner=False)
+def _cycle_reference(cle):
+    return charger_reference(CYCLES_REFERENCE[cle][1])["cycle_df"]
 
 
 def kw(x):
-    return f"{x / 1000.0:.1f} kW"
+    return f"{nombre(x / 1000.0, 1)} kW"
 
 
 st.title("▶️ Lancer une simulation")
@@ -130,42 +132,61 @@ st.caption(
     "physique pour toutes les stratégies sélectionnées."
 )
 
-if "cycle_pret" not in st.session_state:
-    st.warning("Aucun cycle préparé. Commencez par la page « Préparer une simulation ».")
+# Étape 1 — le cycle
+
+choix_cycles = {}
+if "cycle_prepare" in st.session_state:
+    choix_cycles["prepare"] = "Le cycle que vous avez préparé"
+for _cle, (_lib, _chemin) in CYCLES_REFERENCE.items():
+    if Path(_chemin).exists():
+        choix_cycles[_cle] = _lib
+if not choix_cycles:
+    st.warning("Aucun cycle disponible. Commencez par la page « Préparer une simulation ».")
     if st.button("Aller à la préparation"):
         st.switch_page("vues/2_Preparation_donnees.py")
     st.stop()
 
-df = st.session_state["cycle_pret"].copy()
-nb_points = len(df)
-duree_cycle_s = float(df["time"].iloc[-1]) if "time" in df.columns and nb_points else nb_points * DT_SECONDS
-p_dem = df["hasPower"].to_numpy(dtype=float) if "hasPower" in df.columns else np.zeros(nb_points)
-
-
-# Étape 1 — le cycle
-
 st.subheader("1 · Le cycle")
 with st.container(border=True):
-    origine = "préparé par vous" if "prep_meta" in st.session_state else "cycle de référence"
+    c_choix, c_btn = st.columns([3, 1])
+    cle_cycle = c_choix.selectbox("Cycle à simuler", list(choix_cycles), format_func=choix_cycles.get)
+    with c_btn:
+        st.write("")
+        if st.button("Préparer un autre cycle", width="stretch"):
+            st.switch_page("vues/2_Preparation_donnees.py")
+
+    df = (st.session_state["cycle_prepare"] if cle_cycle == "prepare" else _cycle_reference(cle_cycle)).copy()
+    nb_points = len(df)
+    duree_cycle_s = float(df["time"].iloc[-1]) if "time" in df.columns and nb_points else nb_points * DT_SECONDS
+    p_dem = df["hasPower"].to_numpy(dtype=float) if "hasPower" in df.columns else np.zeros(nb_points)
+
     c = st.columns(4)
-    c[0].metric("Cycle utilisé", origine)
-    c[1].metric("Durée", f"{duree_cycle_s / 60:.0f} min", help=f"{nb_points:,} instants".replace(",", " "))
+    c[0].metric("Durée", f"{nombre(duree_cycle_s / 60, 0)} min", help=f"{nb_points:,} instants".replace(",", " "))
+    c[1].metric("Distance", f"{nombre(df['speed'].sum() * DT_SECONDS / 1000, 0)} km" if "speed" in df.columns else "—")
     c[2].metric("Demande maximale", kw(p_dem.max(initial=0.0)))
     c[3].metric("Freinage maximal", kw(-p_dem.min(initial=0.0)))
+    energie_nette = p_dem.sum() * DT_SECONDS / 3.6e6
+    energie_utile = (
+        (1 - core.SOC_EB_MIN) * core.ENERGY_EB_WH + (1 - core.SOC_PB_MIN) * core.ENERGY_PB_WH
+    ) / 1000
     st.caption(
-        f"Énergie de traction demandée : {np.clip(p_dem, 0, None).sum() * DT_SECONDS / 3.6e6:.2f} kWh ; "
-        f"énergie récupérable au freinage : {-np.clip(p_dem, None, 0).sum() * DT_SECONDS / 3.6e6:.2f} kWh."
+        f"Énergie nette demandée : {nombre(energie_nette, 2)} kWh, pour {nombre(energie_utile, 2)} kWh utilisables "
+        f"dans le HESS entre 100 % et le SOC minimal."
     )
-    if st.button("Modifier le cycle"):
-        st.switch_page("vues/2_Preparation_donnees.py")
+    if energie_nette > energie_utile:
+        st.warning(
+            "Ce cycle demande plus d'énergie que le HESS n'en contient : toutes les stratégies "
+            "manqueront d'énergie avant la fin. Réduisez le nombre de répétitions."
+        )
 
     with st.expander("Conditions initiales et précision du calcul"):
         def _soc_initial(cle):
             return int(np.clip(round(float(st.session_state.get(cle, 1.0)) * 100), 20, 100))
 
         s1, s2 = st.columns(2)
-        soc_eb0 = s1.slider("SOC initial de la batterie Énergie (%)", 20, 100, _soc_initial("soc_eb0")) / 100.0
-        soc_pb0 = s2.slider("SOC initial de la batterie Puissance (%)", 20, 100, _soc_initial("soc_pb0")) / 100.0
+        suffixe = "_prepare" if cle_cycle == "prepare" else "_aucun"
+        soc_eb0 = s1.slider("SOC initial de la batterie Énergie (%)", 20, 100, _soc_initial("soc_eb0" + suffixe)) / 100.0
+        soc_pb0 = s2.slider("SOC initial de la batterie Puissance (%)", 20, 100, _soc_initial("soc_pb0" + suffixe)) / 100.0
         resolution = st.radio(
             "Finesse de la recherche de alpha par le filtre de sécurité (plus fin = plus lent)",
             ["Exploration", "Analyse", "Validation"],
@@ -176,6 +197,38 @@ with st.container(border=True):
         st.markdown("**Hypothèses de simulation**")
         for hypothese in ox.HYPOTHESES:
             st.markdown(f"- {hypothese}")
+
+    with st.expander("Pertes : désactivées par défaut, comme dans l'article"):
+        avec_pertes = st.checkbox(
+            "Inclure les pertes dans le calcul du SOC",
+            help="Chaque batterie fournit alors aussi ses pertes Joule, et l'EB celles du convertisseur.",
+        )
+        p1, p2, p3 = st.columns(3)
+        r_eb = p1.number_input(
+            "Résistance interne de l'EB (mΩ)", 1.0, 5000.0, round(core.R_EB_PACK_OHM * 1000, 1), 10.0,
+            disabled=not avec_pertes,
+            help=f"{nombre(core.CELL_EB_RINT_OHM * 1000, 0)} mΩ par cellule × {core.CELL_EB_N_SERIE} en série / {core.CELL_EB_N_PARALLELE} en parallèle",
+        )
+        r_pb = p2.number_input(
+            "Résistance interne de la PB (mΩ)", 1.0, 5000.0, round(core.R_PB_PACK_OHM * 1000, 1), 10.0,
+            disabled=not avec_pertes,
+            help=f"{nombre(core.CELL_PB_RINT_OHM * 1000, 1)} mΩ par cellule × {core.CELL_PB_N_SERIE} en série / {core.CELL_PB_N_PARALLELE} en parallèle",
+        )
+        mode_rendement = p3.radio(
+            "Rendement du convertisseur", ["Courbe mesurée (article, fig. 33)", "Valeur constante"],
+            disabled=not avec_pertes,
+        )
+        rendement_constant = None
+        if mode_rendement == "Valeur constante":
+            rendement_constant = st.slider(
+                "Rendement constant (%)", 80.0, 100.0, 95.5, 0.1, disabled=not avec_pertes,
+            ) / 100.0
+        st.caption(
+            "Courbe mesurée : 91,5 % à 1,2 kW, 95,5 % vers 2,5 kW. Ici le convertisseur ne traite "
+            "qu'environ 10 % de la puissance de l'EB, souvent moins de 1,2 kW : la valeur à 1,2 kW "
+            "est alors conservée, ce qui sous-estime légèrement ses pertes."
+        )
+pertes = (avec_pertes, rendement_constant, r_eb / 1000.0, r_pb / 1000.0)
 
 pas_alpha = {"Exploration": 0.005, "Analyse": 0.002, "Validation": 0.001}[resolution]
 facteur_resolution = {"Exploration": 1.0, "Analyse": 1.5, "Validation": 2.5}[resolution]
@@ -208,10 +261,10 @@ for col, (nom_famille, membres) in zip(colonnes, FAMILLES.items()):
                                  help=f"Temps de calcul {COUT_CALCUL[cle][0]}"):
                     selected.add(cle)
 
-# Dépendance : NS-MLP reçoit en entrée les prédictions du LSTM.
-if "EMS_MLP_neurosymbolic" in selected and "EMS_LSTM" not in selected:
-    selected.add("EMS_LSTM")
-    st.caption("Le LSTM sera aussi simulé : NS-MLP utilise ses prédictions comme entrées.")
+# Dépendance : NS-MLP reçoit en entrée les prédictions du LSTM neuro-symbolique.
+if "EMS_MLP_neurosymbolic" in selected and "EMS_LSTM_neurosymbolic" not in selected:
+    selected.add("EMS_LSTM_neurosymbolic")
+    st.caption("NS-LSTM sera aussi simulé : NS-MLP utilise ses prédictions comme entrées.")
 
 
 # Étape 3 — lancer
@@ -267,7 +320,6 @@ with st.container(border=True):
     lancer = st.button("🚀 Lancer la simulation", type="primary")
 
 if lancer:
-    supprimer_anciens_resultats()
     modeles_tous, erreurs = _charger_modeles(avec_gnn=("EMS_GNN" in selected))
     modeles_charges = {k: v for k, v in modeles_tous.items() if k in selected}
     erreurs_pertinentes = {k: v for k, v in erreurs.items() if k in selected}
@@ -280,39 +332,54 @@ if lancer:
             soc_pb0,
             tuple(sorted(modeles_charges.keys())),
             pas_alpha,
+            pertes,
             modeles_charges,
         )
 
-    st.session_state["resultats_simulation"] = resultats
-    st.session_state["pas_alpha"] = pas_alpha
-    st.session_state["soc_eb0"] = soc_eb0
-    st.session_state["soc_pb0"] = soc_pb0
-    st.session_state["avertissements_simulation"] = avertissements
+    afficher_simulation_personnalisee(
+        st,
+        {
+            "resultats": resultats,
+            "cycle_df": df,
+            "avertissements": avertissements,
+            "meta": {
+                "cycle": choix_cycles[cle_cycle],
+                "soc_eb0": soc_eb0,
+                "soc_pb0": soc_pb0,
+                "pas_alpha": pas_alpha,
+                "pertes_dans_soc": avec_pertes,
+            },
+        },
+    )
     st.session_state["erreurs_chargement"] = erreurs_pertinentes
     st.session_state["duree_simulation"] = time.time() - debut
-    st.session_state["_source_donnees"] = "simulation lancée sur cette page"
     st.session_state["_sim_custom_faite"] = True
+    st.rerun()
 
 
 # Après le calcul : un simple compte rendu, l'analyse est dans « Résultats de simulation »
 
-if st.session_state.get("_sim_custom_faite"):
-    resultats = st.session_state["resultats_simulation"]
+if st.session_state.get("_sim_custom_faite") and CLE_PERSONNALISE in st.session_state:
+    derniere = st.session_state[CLE_PERSONNALISE]
+    resultats = derniere["resultats"]
     erreurs_ch = st.session_state.get("erreurs_chargement", {})
     duree = st.session_state.get("duree_simulation", 0.0)
 
     with st.container(border=True):
         st.markdown("### ✓ Simulation terminée")
         st.markdown(
-            f"**{len(resultats)} stratégies simulées** · durée : {int(duree // 60)} min {int(duree % 60)} s"
+            f"**{len(resultats)} stratégies simulées** sur « {derniere['meta']['cycle']} » "
+            f"({'avec' if derniere['meta'].get('pertes_dans_soc') else 'sans'} pertes) · "
+            f"durée : {int(duree // 60)} min {int(duree % 60)} s"
         )
+        st.caption("Toutes les pages d'analyse affichent maintenant cette simulation (« Ma dernière simulation » dans la barre latérale).")
         for code, msg in erreurs_ch.items():
             st.error(f"{nom_affichage(code)} n'a pas pu être chargé et n'a pas été simulé : {msg}")
         if st.button("Voir les résultats →", type="primary"):
             st.switch_page("vues/6_Resultats_et_Analyse.py")
 
     timings, autres = [], []
-    for msg in st.session_state.get("avertissements_simulation", []):
+    for msg in derniere.get("avertissements", []):
         m = re.match(r"\[timing\]\s*(\S+)\s*:\s*([\d.]+)", msg)
         if m:
             timings.append((m.group(1), float(m.group(2))))
@@ -321,7 +388,7 @@ if st.session_state.get("_sim_custom_faite"):
     if timings or autres:
         with st.expander("Détails techniques de l'exécution"):
             for code, s in sorted(timings, key=lambda kv: -kv[1]):
-                st.markdown(f"- {nom_affichage(code)} : {s:.0f} s")
+                st.markdown(f"- {nom_affichage(code)} : {nombre(s, 0)} s")
             for msg in autres:
                 st.caption(msg)
 

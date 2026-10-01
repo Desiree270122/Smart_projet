@@ -21,6 +21,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import ems_core as core
+from core.format import SEPARATEURS_PLOTLY, nombre
 
 
 CHEMIN_OWL = core.ROOT_DIR / "ontologies" / "OntoHESS2.owl"
@@ -219,13 +220,13 @@ def diagnostic_configuration(soc_eb0, soc_pb0, nb_strategies, objectif):
     alertes = []
     if soc_eb0 < 0.35:
         alertes.append(
-            f"L'ontologie associe un SOC initial de {soc_eb0 * 100:.0f} % à la classe "
+            f"L'ontologie associe un SOC initial de {nombre(soc_eb0 * 100, 0)} % à la classe "
             "`SOCCondition` : la batterie Énergie atteindra rapidement sa limite de "
             "fonctionnement et sera protégée par le filtre."
         )
     if soc_pb0 < 0.35:
         alertes.append(
-            f"SOC initial de la batterie Puissance à {soc_pb0 * 100:.0f} % : sa capacité "
+            f"SOC initial de la batterie Puissance à {nombre(soc_pb0 * 100, 0)} % : sa capacité "
             "à absorber les pics de demande sera fortement réduite."
         )
 
@@ -358,17 +359,17 @@ def interpretation_ontologique(p_dem, soc_eb, soc_pb):
 
     observations = [
         {
-            "mesure": f"SOC de la batterie Énergie = {soc_eb * 100:.0f} %",
+            "mesure": f"SOC de la batterie Énergie = {nombre(soc_eb * 100, 0)} %",
             "propriete": "hasSocBattery",
             "individu": "batteryE1",
         },
         {
-            "mesure": f"SOC de la batterie Puissance = {soc_pb * 100:.0f} %",
+            "mesure": f"SOC de la batterie Puissance = {nombre(soc_pb * 100, 0)} %",
             "propriete": "hasSocBattery",
             "individu": "batteryP1",
         },
         {
-            "mesure": f"Puissance demandée = {p_dem / 1000:.1f} kW",
+            "mesure": f"Puissance demandée = {nombre(p_dem / 1000, 1)} kW",
             "propriete": "hasPower",
             "individu": "load1",
         },
@@ -378,17 +379,17 @@ def interpretation_ontologique(p_dem, soc_eb, soc_pb):
     etat = etat_fonctionnement(p_dem)
     if etat == "state_Overload_High":
         justification = (
-            f"la puissance demandée ({p_dem / 1000:.1f} kW) dépasse `pEB_max_value` "
-            f"({core.P_EB_MAX_W / 1000:.1f} kW)"
+            f"la puissance demandée ({nombre(p_dem / 1000, 1)} kW) dépasse `pEB_max_value` "
+            f"({nombre(core.P_EB_MAX_W / 1000, 1)} kW)"
         )
     elif etat == "state_Overload_Low":
         justification = (
-            f"la puissance récupérée ({p_dem / 1000:.1f} kW) dépasse la capacité de "
-            f"recharge `pEB_min_value` ({core.P_EB_MIN_W / 1000:.1f} kW)"
+            f"la puissance récupérée ({nombre(p_dem / 1000, 1)} kW) dépasse la capacité de "
+            f"recharge `pEB_min_value` ({nombre(core.P_EB_MIN_W / 1000, 1)} kW)"
         )
     else:
         justification = (
-            f"la puissance demandée ({p_dem / 1000:.1f} kW) reste dans les limites "
+            f"la puissance demandée ({nombre(p_dem / 1000, 1)} kW) reste dans les limites "
             f"`pEB_min_value` … `pEB_max_value`"
         )
 
@@ -408,8 +409,8 @@ def interpretation_ontologique(p_dem, soc_eb, soc_pb):
                 else "SOC de la batterie Énergie au-dessus de son seuil"
             ),
             "justification": (
-                f"`hasSocBattery` = {soc_eb * 100:.0f} % comparé à `socEB_minThreshold` "
-                f"= {core.SOC_EB_MIN * 100:.0f} %"
+                f"`hasSocBattery` = {nombre(soc_eb * 100, 0)} % comparé à `socEB_minThreshold` "
+                f"= {nombre(core.SOC_EB_MIN * 100, 0)} %"
             ),
             "present": "SOCCondition" in classes_ontologie(),
         },
@@ -471,10 +472,10 @@ def _format_valeur(nom_variable, valeur):
     if valeur is None:
         return "?"
     if nom_variable in ("soc", "smin"):
-        return f"{valeur * 100:.0f} %"
+        return f"{nombre(valeur * 100, 0)} %"
     if abs(valeur) >= 1000:
-        return f"{valeur / 1000:.1f} kW"
-    return f"{valeur:.2f}"
+        return f"{nombre(valeur / 1000, 1)} kW"
+    return f"{nombre(valeur, 2)}"
 
 
 # Lecture en clair des règles SWRL de mode de fonctionnement et de répartition.
@@ -510,17 +511,17 @@ CONDITIONS_EN_FRANCAIS = {
     ("greaterThan", ("P", "0")): "le véhicule est en traction",
     ("lessThan", ("P", "0")): "le véhicule freine",
     ("greaterThan", ("P", "pmax")):
-        f"la demande dépasse la limite de décharge de la batterie Énergie ({core.P_EB_MAX_W / 1000:.1f} kW)",
+        f"la demande dépasse la limite de décharge de la batterie Énergie ({nombre(core.P_EB_MAX_W / 1000, 1)} kW)",
     ("lessThanOrEqual", ("P", "pmax")):
-        f"la demande ne dépasse pas la limite de décharge de la batterie Énergie ({core.P_EB_MAX_W / 1000:.1f} kW)",
+        f"la demande ne dépasse pas la limite de décharge de la batterie Énergie ({nombre(core.P_EB_MAX_W / 1000, 1)} kW)",
     ("lessThan", ("P", "pmin")):
-        f"la puissance récupérée dépasse ce que la batterie Énergie peut absorber ({-core.P_EB_MIN_W / 1000:.1f} kW)",
+        f"la puissance récupérée dépasse ce que la batterie Énergie peut absorber ({nombre(-core.P_EB_MIN_W / 1000, 1)} kW)",
     ("greaterThanOrEqual", ("P", "pmin")):
-        f"la batterie Énergie peut absorber toute la puissance récupérée (jusqu'à {-core.P_EB_MIN_W / 1000:.1f} kW)",
+        f"la batterie Énergie peut absorber toute la puissance récupérée (jusqu'à {nombre(-core.P_EB_MIN_W / 1000, 1)} kW)",
     ("lessThanOrEqual", ("soc", "smin")):
-        f"le SOC de la batterie Énergie a atteint son minimum ({core.SOC_EB_MIN * 100:.0f} %)",
+        f"le SOC de la batterie Énergie a atteint son minimum ({nombre(core.SOC_EB_MIN * 100, 0)} %)",
     ("greaterThan", ("soc", "smin")):
-        f"le SOC de la batterie Énergie est au-dessus de son minimum ({core.SOC_EB_MIN * 100:.0f} %)",
+        f"le SOC de la batterie Énergie est au-dessus de son minimum ({nombre(core.SOC_EB_MIN * 100, 0)} %)",
 }
 
 
@@ -601,15 +602,15 @@ def regles_floues():
 
 def termes_flous():
     """Définition chiffrée des termes employés par les règles floues."""
-    kw = lambda w: f"{w / 1000:.1f} kW"  # noqa: E731
+    kw = lambda w: f"{nombre(w / 1000, 1)} kW"  # noqa: E731
     return [
-        ("SOC de l'EB bas", f"plein en dessous de {core.SOC_LOW_FULL_EB * 100:.0f} %, nul au-dessus de {core.SOC_LOW_THRESHOLD * 100:.0f} %"),
-        ("SOC de la PB bas", f"plein en dessous de {core.SOC_LOW_FULL_PB * 100:.0f} %, nul au-dessus de {core.SOC_LOW_THRESHOLD * 100:.0f} %"),
+        ("SOC de l'EB bas", f"plein en dessous de {nombre(core.SOC_LOW_FULL_EB * 100, 0)} %, nul au-dessus de {nombre(core.SOC_LOW_THRESHOLD * 100, 0)} %"),
+        ("SOC de la PB bas", f"plein en dessous de {nombre(core.SOC_LOW_FULL_PB * 100, 0)} %, nul au-dessus de {nombre(core.SOC_LOW_THRESHOLD * 100, 0)} %"),
         ("SOC moyen", "trapèze 25 – 35 – 65 – 75 %"),
         ("SOC haut", "nul en dessous de 70 %, plein au-dessus de 80 %"),
-        ("Traction", f"de {core.EPS_POWER_W:.0f} W jusqu'à la limite de l'EB ({kw(core.P_EB_MAX_W)}) et au-delà"),
+        ("Traction", f"de {nombre(core.EPS_POWER_W, 0)} W jusqu'à la limite de l'EB ({kw(core.P_EB_MAX_W)}) et au-delà"),
         ("Forte traction", f"nulle en dessous de {kw(0.6 * core.P_EB_MAX_W)}, pleine au-delà de {kw(core.P_EB_MAX_W)}"),
-        ("Demande nulle", f"|P| ≤ {core.EPS_POWER_W:.0f} W (s'annule à {2 * core.EPS_POWER_W:.0f} W)"),
+        ("Demande nulle", f"|P| ≤ {nombre(core.EPS_POWER_W, 0)} W (s'annule à {nombre(2 * core.EPS_POWER_W, 0)} W)"),
         ("Récupération", f"puissance négative ; forte en dessous de {kw(core.P_EB_MIN_W)}"),
         ("Accélération stable", "|a| ≤ 0,1 m/s² (s'annule à 0,4 m/s²)"),
     ]
@@ -864,8 +865,8 @@ def concepts_actifs(p_dem, soc_eb, soc_pb, p_eb=None):
             "libelle": etat["libelle"],
             "actif": au_dela,
             "mesure": (
-                f"puissance demandée {p_kw:+.1f} kW, limites de la batterie Énergie "
-                f"{core.P_EB_MIN_W / 1000:.1f} … {core.P_EB_MAX_W / 1000:.1f} kW"
+                f"puissance demandée {nombre(p_kw, 1, signe=True)} kW, limites de la batterie Énergie "
+                f"{nombre(core.P_EB_MIN_W / 1000, 1)} … {nombre(core.P_EB_MAX_W / 1000, 1)} kW"
             ),
             "consequence": (
                 "la batterie Puissance doit compléter la batterie Énergie"
@@ -877,35 +878,35 @@ def concepts_actifs(p_dem, soc_eb, soc_pb, p_eb=None):
             "concept": "PowerState (forte demande)",
             "libelle": LIBELLES_SYMBOLIQUES["high_power_demand"],
             "actif": bool(etats["high_power_demand"]),
-            "mesure": f"puissance demandée {abs(p_kw):.1f} kW, seuil {core.HIGH_POWER_THRESHOLD_W / 1000:.0f} kW",
+            "mesure": f"puissance demandée {nombre(abs(p_kw), 1)} kW, seuil {nombre(core.HIGH_POWER_THRESHOLD_W / 1000, 0)} kW",
             "consequence": "la batterie Puissance est davantage sollicitée",
         },
         {
             "concept": "SOCCondition",
             "libelle": LIBELLES_SYMBOLIQUES["EB_available"],
             "actif": bool(etats["EB_available"]),
-            "mesure": f"SOC de l'EB {soc_eb * 100:.0f} %, seuil minimal {core.SOC_EB_MIN * 100:.0f} %",
+            "mesure": f"SOC de l'EB {nombre(soc_eb * 100, 0)} %, seuil minimal {nombre(core.SOC_EB_MIN * 100, 0)} %",
             "consequence": "la batterie Énergie peut fournir de la puissance",
         },
         {
             "concept": "SOCState (bas)",
             "libelle": LIBELLES_SYMBOLIQUES["EB_low_SOC"],
             "actif": bool(etats["EB_low_SOC"]),
-            "mesure": f"SOC de l'EB {soc_eb * 100:.0f} %",
+            "mesure": f"SOC de l'EB {nombre(soc_eb * 100, 0)} %",
             "consequence": "la batterie Énergie doit être protégée",
         },
         {
             "concept": "PowerState (récupération)",
             "libelle": LIBELLES_SYMBOLIQUES["regenerative_braking"],
             "actif": bool(etats["regenerative_braking"]),
-            "mesure": f"puissance demandée {p_kw:+.1f} kW",
+            "mesure": f"puissance demandée {nombre(p_kw, 1, signe=True)} kW",
             "consequence": "l'énergie récupérée est dirigée vers les batteries",
         },
         {
             "concept": "ConverterPower (limite)",
             "libelle": LIBELLES_SYMBOLIQUES["converter_risk"],
             "actif": bool(etats["converter_risk"]),
-            "mesure": f"seuil d'alerte {core.CONVERTER_RISK_THRESHOLD * 100:.0f} % de la capacité",
+            "mesure": f"seuil d'alerte {nombre(core.CONVERTER_RISK_THRESHOLD * 100, 0)} % de la capacité",
             "consequence": "la sollicitation du convertisseur doit être limitée",
         },
     ]
@@ -924,7 +925,7 @@ def indice_confiance(p_dem, soc_eb, soc_pb, correction, alpha_ecart=0.0):
     marge_soc = (soc_eb - core.SOC_EB_MIN) / max(core.SOC_EB_MIN, 1e-6)
     if marge_soc < 0.15:
         score -= 25
-        raisons_contre.append(f"SOC de l'EB proche du seuil minimal ({soc_eb * 100:.0f} %)")
+        raisons_contre.append(f"SOC de l'EB proche du seuil minimal ({nombre(soc_eb * 100, 0)} %)")
     else:
         raisons_pour.append("états de charge éloignés des seuils critiques")
 
@@ -943,7 +944,7 @@ def indice_confiance(p_dem, soc_eb, soc_pb, correction, alpha_ecart=0.0):
 
     if alpha_ecart > 0.15:
         score -= 15
-        raisons_contre.append(f"écart notable avec la proposition initiale ({alpha_ecart:.2f})")
+        raisons_contre.append(f"écart notable avec la proposition initiale ({nombre(alpha_ecart, 2)})")
 
     return max(0.0, min(100.0, score)), raisons_pour, raisons_contre
 
@@ -957,25 +958,25 @@ def contrefactuels(p_dem, soc_eb, soc_pb):
 
     if p_dem > core.P_EB_MAX_W:
         phrases.append(
-            f"Si la demande avait été inférieure à {seuil_kw:.1f} kW (au lieu de "
-            f"{p_kw:.1f} kW), la batterie Énergie aurait pu fournir seule la puissance."
+            f"Si la demande avait été inférieure à {nombre(seuil_kw, 1)} kW (au lieu de "
+            f"{nombre(p_kw, 1)} kW), la batterie Énergie aurait pu fournir seule la puissance."
         )
     elif p_dem > core.EPS_POWER_W:
         phrases.append(
-            f"Si la demande avait dépassé {seuil_kw:.1f} kW (au lieu de {p_kw:.1f} kW), "
+            f"Si la demande avait dépassé {nombre(seuil_kw, 1)} kW (au lieu de {nombre(p_kw, 1)} kW), "
             "la batterie Puissance aurait dû compléter."
         )
 
     if soc_eb <= core.SOC_EB_MIN + 0.05:
         phrases.append(
             f"Si le SOC de la batterie Énergie avait dépassé "
-            f"{(core.SOC_EB_MIN + 0.05) * 100:.0f} %, elle n'aurait pas été protégée "
+            f"{nombre((core.SOC_EB_MIN + 0.05) * 100, 0)} %, elle n'aurait pas été protégée "
             "et aurait pris une part plus importante."
         )
     else:
         phrases.append(
             f"Si le SOC de la batterie Énergie était descendu sous "
-            f"{core.SOC_EB_MIN * 100:.0f} %, elle aurait été protégée et la batterie "
+            f"{nombre(core.SOC_EB_MIN * 100, 0)} %, elle aurait été protégée et la batterie "
             "Puissance aurait pris le relais."
         )
 
@@ -1008,11 +1009,11 @@ def expliquer_importances(noms_lisibles, importances):
     if len(parts) > 1:
         seconde, pct2 = parts[1]
         return (
-            f"Le modèle s'est principalement appuyé sur « {principale} » ({pct1:.0f} %) "
-            f"et sur « {seconde} » ({pct2:.0f} %). Les autres variables ont eu une "
+            f"Le modèle s'est principalement appuyé sur « {principale} » ({nombre(pct1, 0)} %) "
+            f"et sur « {seconde} » ({nombre(pct2, 0)} %). Les autres variables ont eu une "
             "influence secondaire."
         )
-    return f"Le modèle s'est appuyé presque exclusivement sur « {principale} » ({pct1:.0f} %)."
+    return f"Le modèle s'est appuyé presque exclusivement sur « {principale} » ({nombre(pct1, 0)} %)."
 
 
 def chaine_inference(p_dem, soc_eb, soc_pb, part_eb, part_pb, correction, p_eb=None):
@@ -1022,14 +1023,14 @@ def chaine_inference(p_dem, soc_eb, soc_pb, part_eb, part_pb, correction, p_eb=N
 
     return {
         "mesures": [
-            f"Puissance demandée : {p_dem / 1000:.1f} kW",
-            f"SOC batterie Énergie : {soc_eb * 100:.0f} %",
-            f"SOC batterie Puissance : {soc_pb * 100:.0f} %",
+            f"Puissance demandée : {nombre(p_dem / 1000, 1)} kW",
+            f"SOC batterie Énergie : {nombre(soc_eb * 100, 0)} %",
+            f"SOC batterie Puissance : {nombre(soc_pb * 100, 0)} %",
         ],
         "concepts": [c for c in concepts if c["actif"]],
         "concepts_absents": [c for c in concepts if not c["actif"]],
         "regles": activees,
-        "decision": f"Énergie {part_eb:.0f} % · Puissance {part_pb:.0f} %",
+        "decision": f"Énergie {nombre(part_eb, 0)} % · Puissance {nombre(part_pb, 0)} %",
         "validation": (
             "Décision corrigée par le filtre physique"
             if correction

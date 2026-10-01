@@ -100,8 +100,15 @@ V_EB_PACK_NOM = 450.0
 V_PB_PACK_NOM = 402.6  
 V_HESS_BUS_NOM = 402.6  
 
-CAPACITY_EB_AH = 30.4664
-CAPACITY_PB_AH = 7.4196
+# Packs calculés à partir des cellules (formules de l'encadrant, voir
+# compute_pack_characteristics) : énergie = densité d'énergie × masse,
+# capacité = énergie / tension. Vérifié plus bas contre les données cellule.
+# (Valeurs de l'article, utilisées avant le 01/10/2026 : 13 709,89 Wh et 2 987,12 Wh.)
+ENERGY_EB_WH = 228.6 * 0.063 * 125 * 7    # 12 601,6 Wh
+ENERGY_PB_WH = 72.44 * 0.205 * 122 * 2    # 3 623,4 Wh
+
+CAPACITY_EB_AH = ENERGY_EB_WH / V_EB_PACK_NOM   # 28,0 Ah
+CAPACITY_PB_AH = ENERGY_PB_WH / V_PB_PACK_NOM   # 9,0 Ah
 
 SOC_EB_MIN, SOC_EB_MAX = 0.20, 1.0
 SOC_PB_MIN, SOC_PB_MAX = 0.20, 1.0  
@@ -116,10 +123,8 @@ P_CONV_MIN_W, P_CONV_MAX_W = -760.0, 1520.0
 CONVERTER_RATIO_DISCHARGE = 9.493670886075948
 CONVERTER_RATIO_CHARGE = 9.493670886075948
 
-ENERGY_EB_WH = 13709.89
-ENERGY_PB_WH = 2987.12
-
 ALPHA_GRID_STEP = 0.001
+ALPHA_GRID_STEP_DEFAUT = ALPHA_GRID_STEP
 
 ALPHA_GRID = np.arange(
     0.0,
@@ -290,6 +295,74 @@ def compute_pack_characteristics(v_cellule, i_decharge_cellule, i_recharge_cellu
     if capacite_cellule_ah is not None:
         resultat["capacite_Ah"] = capacite_cellule_ah * n_parallele
     return resultat
+
+
+# Les constantes des packs doivent découler des données cellule : on le vérifie
+# au chargement, pour qu'elles ne puissent plus diverger sans qu'on le voie.
+for _pack, _ref_energie, _ref_capacite, _ref_pmax, _cellule in (
+    ("EB", ENERGY_EB_WH, CAPACITY_EB_AH, P_EB_MAX_W,
+     (CELL_EB_V_CELLULE, CELL_EB_I_DECHARGE_A, CELL_EB_I_RECHARGE_A, CELL_EB_MASSE_KG,
+      CELL_EB_DE_WH_KG, CELL_EB_N_SERIE, CELL_EB_N_PARALLELE, CELL_EB_CAPACITE_AH)),
+    ("PB", ENERGY_PB_WH, CAPACITY_PB_AH, P_PB_MAX_W,
+     (CELL_PB_V_CELLULE, CELL_PB_I_DECHARGE_A, CELL_PB_I_RECHARGE_A, CELL_PB_MASSE_KG,
+      CELL_PB_DE_WH_KG, CELL_PB_N_SERIE, CELL_PB_N_PARALLELE, CELL_PB_CAPACITE_AH)),
+):
+    _calc = compute_pack_characteristics(*_cellule)
+    assert abs(_calc["energie_Wh"] - _ref_energie) < 1.0, f"Énergie du pack {_pack} incohérente avec les cellules"
+    assert abs(_calc["capacite_Ah"] - _ref_capacite) < 0.01, f"Capacité du pack {_pack} incohérente avec les cellules"
+    assert abs(_calc["puissance_decharge_W"] - _ref_pmax) < 1.0, f"Puissance du pack {_pack} incohérente avec les cellules"
+
+
+# Pertes du HESS -----------------------------------------------------------
+#
+# Par défaut, la simulation est SANS pertes, comme dans l'article de référence.
+# set_pertes() permet de les inclure dans le calcul du SOC : chaque batterie
+# fournit alors, en plus de sa puissance au bus, ses pertes Joule R·I² et, pour
+# l'EB, les pertes du convertisseur, qui ne traite que P_conv = (V_EB − V_PB)·I_EB.
+
+R_EB_PACK_OHM_DEFAUT = CELL_EB_RINT_OHM * CELL_EB_N_SERIE / CELL_EB_N_PARALLELE   # ≈ 536 mΩ
+R_PB_PACK_OHM_DEFAUT = CELL_PB_RINT_OHM * CELL_PB_N_SERIE / CELL_PB_N_PARALLELE   # ≈ 214 mΩ
+R_EB_PACK_OHM, R_PB_PACK_OHM = R_EB_PACK_OHM_DEFAUT, R_PB_PACK_OHM_DEFAUT
+
+# Rendement mesuré du convertisseur PSFB (article, fig. 33), relevé sur la
+# courbe entre 1,2 et 2,9 kW ; hors de cette plage, la valeur la plus proche
+# est conservée (le rendement réel est encore plus bas sous 1,2 kW).
+RENDEMENT_CONV_PUISSANCE_KW = np.array([1.2, 1.5, 1.75, 2.0, 2.2, 2.5, 2.75, 2.9])
+RENDEMENT_CONV_MESURE = np.array([0.9155, 0.930, 0.940, 0.949, 0.9535, 0.9555, 0.9552, 0.9545])
+
+PERTES_DANS_SOC = False
+RENDEMENT_CONV_CONSTANT = None   # None : courbe mesurée
+
+
+def set_pertes(dans_soc, rendement_constant=None, r_eb_ohm=None, r_pb_ohm=None):
+    """Active ou non les pertes dans le calcul du SOC, et règle leurs paramètres.
+    Un paramètre omis reprend sa valeur par défaut : set_pertes(False) remet tout
+    à zéro. rendement_constant = None : courbe mesurée du convertisseur."""
+    global PERTES_DANS_SOC, RENDEMENT_CONV_CONSTANT, R_EB_PACK_OHM, R_PB_PACK_OHM
+    PERTES_DANS_SOC = bool(dans_soc)
+    RENDEMENT_CONV_CONSTANT = None if rendement_constant is None else float(rendement_constant)
+    R_EB_PACK_OHM = R_EB_PACK_OHM_DEFAUT if r_eb_ohm is None else float(r_eb_ohm)
+    R_PB_PACK_OHM = R_PB_PACK_OHM_DEFAUT if r_pb_ohm is None else float(r_pb_ohm)
+
+
+def rendement_convertisseur(p_conv_w):
+    """Rendement du convertisseur pour la puissance qu'il traite (W)."""
+    p = np.abs(np.asarray(p_conv_w, dtype=float))
+    if RENDEMENT_CONV_CONSTANT is not None:
+        return np.full_like(p, RENDEMENT_CONV_CONSTANT)
+    return np.interp(p / 1000.0, RENDEMENT_CONV_PUISSANCE_KW, RENDEMENT_CONV_MESURE)
+
+
+def pertes_instantanees(p_eb, p_pb):
+    """Pertes (W) de l'EB, de la PB et du convertisseur pour des puissances au bus."""
+    i_eb = np.asarray(p_eb, dtype=float) / V_EB_PACK_NOM
+    i_pb = np.asarray(p_pb, dtype=float) / V_PB_PACK_NOM
+    p_conv = (V_EB_PACK_NOM - V_PB_PACK_NOM) * i_eb
+    return (
+        R_EB_PACK_OHM * i_eb**2,
+        R_PB_PACK_OHM * i_pb**2,
+        (1.0 - rendement_convertisseur(p_conv)) * np.abs(p_conv),
+    )
 
 
 def set_battery_pack_parameters(pack, caracteristiques):
@@ -1544,6 +1617,12 @@ def update_soc(
     p_eb,
     p_pb,
 ):
+    # Avec pertes : chaque batterie fournit aussi ses pertes (voir set_pertes).
+    if PERTES_DANS_SOC:
+        perte_eb, perte_pb, perte_conv = pertes_instantanees(p_eb, p_pb)
+        p_eb = p_eb + float(perte_eb) + float(perte_conv)
+        p_pb = p_pb + float(perte_pb)
+
     i_eb = (
         p_eb
         / V_EB_PACK_NOM
@@ -2540,9 +2619,9 @@ MLP_NS_SCALER_FILE = MODELS_DIR / "mlp_ns_scalers.npz"  # A CONFIRMER si le nom 
 
 # CONFIRME dans 01_configuration.ipynb (liste et ordre exacts). Note importante :
 # les 3 colonnes Pdem_pred_ns / delta_soc_eb_pred_ns / delta_soc_pb_pred_ns sont
-# les SORTIES BRUTES d'EMS_LSTM -- ce modele depend donc d'EMS_LSTM charge en
-# amont, en plus de la logique floue (alpha_ems_fuzzy_logic). Voir
-# construire_entree_mlp_neurosymbolic.
+# les SORTIES BRUTES d'EMS_LSTM_neurosymbolic (12_EMS_MLP_neurosymbolic.ipynb,
+# cellule 3) -- ce modele depend donc du LSTM neuro-symbolique charge en amont,
+# en plus de la logique floue (alpha_ems_fuzzy_logic).
 MLP_NS_INPUT_COLS = [
     "SOC_EB", "SOC_PB", "hasPower", "speed", "hasAcceleration",
     "Pdem_pred_ns", "delta_soc_eb_pred_ns", "delta_soc_pb_pred_ns",
@@ -2558,6 +2637,28 @@ MLP_NS_HIDDEN_2 = 32
 MLP_NS_DROPOUT = 0.10  # À CONFIRMER
 
 MLP_NS_MAX_DELTA = 0.20  # confirme (01_configuration.ipynb : MAX_DELTA_ALPHA, etait 0.30 avant)
+
+# Garde-fou symbolique de NS-MLP : quand le SOC de la batterie Puissance passe
+# sous ce seuil de réserve, les règles de répartition d'OntoHESS (R14, R16)
+# reprennent la main en traction : l'EB fournit la demande jusqu'à sa limite et
+# la PB seulement le surplus. La PB garde ainsi son énergie pour les pics, que
+# l'EB seule ne peut pas fournir. Le réseau propose, l'ontologie dispose.
+# Seuil = celui de l'état symbolique « SOC de la PB faible » (PB_low_SOC) : le
+# garde-fou s'active exactement quand l'ontologie déclare la PB faible. Sur le
+# cycle Artemis, tous les seuils testés de 0,30 à 0,60 suppriment la demande non
+# servie de NS-MLP ; 0,30 est celui qui intervient le moins.
+MLP_NS_RESERVE_PB_SOC = SOC_LOW_THRESHOLD
+
+
+def garde_fou_reserve_pb(alpha, p_dem, soc_eb, soc_pb, seuil=None):
+    """(alpha, actif) après le garde-fou symbolique de NS-MLP."""
+    seuil = MLP_NS_RESERVE_PB_SOC if seuil is None else seuil
+    if p_dem <= EPS_POWER_W or soc_pb > seuil or soc_eb <= SOC_EB_MIN + SOC_TOL:
+        return float(alpha), False
+    alpha_regle = max(0.0, (p_dem - P_EB_MAX_W) / p_dem)
+    if alpha > alpha_regle:
+        return alpha_regle, True
+    return float(alpha), False
 GAMMA_FUSION = 0.30  # confirme (01_configuration.ipynb) -- role exact dans la fusion alpha non confirme, non utilise pour l'instant
 
 
@@ -3715,14 +3816,17 @@ def simuler_toutes_strategies(
     if "EMS_MLP_neurosymbolic" in modeles_charges:
         model = modeles_charges["EMS_MLP_neurosymbolic"]
 
-        if "EMS_LSTM" not in modeles_charges:
+        # Pdem_pred_ns, delta_soc_eb_pred_ns et delta_soc_pb_pred_ns sont les
+        # sorties du LSTM NEURO-SYMBOLIQUE, avec son propre scaler : c'est ainsi
+        # que 12_EMS_MLP_neurosymbolic.ipynb construit les entrées d'entraînement.
+        if "EMS_LSTM_neurosymbolic" not in modeles_charges:
             avertissements.append(
-                "EMS_MLP_neurosymbolic non simulé : nécessite EMS_LSTM chargé pour "
+                "EMS_MLP_neurosymbolic non simulé : nécessite EMS_LSTM_neurosymbolic chargé pour "
                 "produire Pdem_pred_ns, delta_soc_eb_pred_ns, delta_soc_pb_pred_ns "
-                "(confirmé dans 01_configuration.ipynb : MLP_NS_INPUT_COLS en dépend)."
+                "(12_EMS_MLP_neurosymbolic.ipynb : MLP_NS_INPUT_COLS en dépend)."
             )
         else:
-            scaler_lstm_pour_ns = charger_scaler(LSTM_SCALER_FILE)
+            scaler_lstm_pour_ns = charger_scaler(LSTM_NS_SCALER_FILE)
             scaler_mlp_ns = charger_scaler(MLP_NS_SCALER_FILE)
             if scaler_mlp_ns is None:
                 avertissements.append(
@@ -3737,7 +3841,7 @@ def simuler_toutes_strategies(
 
 
             predire_lstm_pour_ns = _construire_predicteur_lstm_brut(
-                modeles_charges["EMS_LSTM"], LSTM_FEATURE_COLS, LSTM_WINDOW, scaler_lstm_pour_ns,
+                modeles_charges["EMS_LSTM_neurosymbolic"], LSTM_NS_FEATURE_COLS, LSTM_WINDOW, scaler_lstm_pour_ns,
             )
             avert_scaler_mlp_ns_signale = [False]
 
@@ -3786,17 +3890,28 @@ def simuler_toutes_strategies(
                 with torch.no_grad():
                     alpha, _, _ = model(x, af)
 
-                return float(alpha.item())
+                alpha_final_ns, garde = garde_fou_reserve_pb(float(alpha.item()), p_dem, soc_eb, soc_pb)
+                # Décomposition de la décision, gardée pour l'explication.
+                suivi_ns["alpha_flou"][t] = alpha_fuzzy_val
+                suivi_ns["alpha_reseau"][t] = float(alpha.item())
+                suivi_ns["garde_fou"][t] = garde
+                return alpha_final_ns
 
+            suivi_ns = {
+                "alpha_flou": np.full(len(df), np.nan),
+                "alpha_reseau": np.full(len(df), np.nan),
+                "garde_fou": np.zeros(len(df), dtype=bool),
+            }
             try:
                 _t0 = time.time()
                 resultats["EMS_MLP_neurosymbolic"] = simuler_strategie_deterministe(
                     df, soc_eb0, soc_pb0, _alpha_mlp_ns,
                 )
+                resultats["EMS_MLP_neurosymbolic"].update(suivi_ns)
                 avertissements.append(f"[timing] EMS_MLP_neurosymbolic : {time.time() - _t0:.1f} s")
                 avertissements.append(
                     "EMS_MLP_neurosymbolic simulé avec les 17 colonnes confirmées "
-                    "(01_configuration.ipynb), y compris les 3 sorties d'EMS_LSTM "
+                    "(01_configuration.ipynb), y compris les 3 sorties d'EMS_LSTM_neurosymbolic "
                     "(recalculées en interne, ce qui double le coût de calcul du LSTM)."
                 )
             except KeyError as exc:

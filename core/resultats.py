@@ -2,8 +2,8 @@
 core/resultats.py — Source UNIQUE de chargement et d'exploitation des
 résultats de simulation précalculés.
 
-Toutes les pages « précalculées » (Dashboard, Comparaison, Résultats & Analyse,
-Explicabilité, Moteur Neuro-Symbolique) passent par ce module — et non chacune
+Toutes les pages d'analyse (Tableau de bord, Comparaison, Résultats de simulation,
+Explicabilité, Base de connaissances) passent par ce module — et non chacune
 à sa manière. Elles ne relancent jamais la simulation lourde : elles lisent le
 fichier produit hors-ligne par `scripts/run_simulations.py`.
 
@@ -12,6 +12,7 @@ chaque stratégie, les signaux du cycle (dont hasPower), et des métadonnées.
 Aucune dépendance au CSV d'origine n'est donc nécessaire.
 """
 
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -43,14 +44,26 @@ def nom_affichage(cle: str) -> str:
     return LIBELLES.get(cle, cle)
 
 
-def charger_reference(chemin=None) -> dict:
-    """Charge le fichier de simulation précalculé.
+# Cycles de référence précalculés par scripts/run_simulations.py.
+CYCLES_REFERENCE = {
+    "artemis": ("Artemis urbain + routier (×6)", FICHIER_REFERENCE),
+    "wltc": ("WLTC classe 3 (×4)", core.RESULTS_DIR / "precomputed" / "simulation_wltc.joblib"),
+}
+CYCLE_PERSONNALISE = "personnalise"
 
-    Retourne un dictionnaire {resultats, cycle, avertissements, meta}.
+# Clés de session. « cycle_pret » est TOUJOURS le cycle des résultats affichés ;
+# le cycle en cours de préparation (page 2) vit à part, dans « cycle_prepare ».
+CLE_CYCLE = "_cycle_choisi"                   # choix de la barre latérale
+CLE_CYCLE_DEMANDE = "_cycle_a_selectionner"   # choix demandé par une page, appliqué au run suivant
+CLE_PERSONNALISE = "_simulation_personnalisee"
+
+
+def charger_reference(chemin=None) -> dict:
+    """Charge un fichier de simulation précalculé.
+
+    Retourne un dictionnaire {resultats, cycle_df, avertissements, meta}.
     Lève FileNotFoundError explicite si le précalcul n'a pas encore été lancé.
     """
-    import joblib
-
     chemin = Path(chemin) if chemin else FICHIER_REFERENCE
     if not chemin.exists():
         raise FileNotFoundError(
@@ -58,36 +71,78 @@ def charger_reference(chemin=None) -> dict:
             "Lancez d'abord le précalcul :\n"
             "    python scripts/run_simulations.py"
         )
+    return _charger_joblib(str(chemin), chemin.stat().st_mtime)
+
+
+@lru_cache(maxsize=4)
+def _charger_joblib(chemin, _mtime):
+    import joblib
+
     return joblib.load(chemin)
 
 
-def assurer_donnees_session(st, chemin=None) -> str:
-    """« Pont » entre les résultats précalculés et les pages existantes.
+def cycles_disponibles(st) -> dict:
+    """{clé: libellé} des cycles dont les résultats peuvent être affichés."""
+    options = {cle: lib for cle, (lib, chemin) in CYCLES_REFERENCE.items() if Path(chemin).exists()}
+    if CLE_PERSONNALISE in st.session_state:
+        options[CYCLE_PERSONNALISE] = "Ma dernière simulation"
+    return options
 
-    Les pages Résultats/Analyse/Explicabilité/Moteur ont été écrites pour lire
-    `st.session_state["resultats_simulation"]` et `["cycle_pret"]`, remplis
-    autrefois par une simulation live (lente). Cette fonction les remplit
-    depuis le fichier précalculé si — et seulement si — ils sont absents.
 
-    Ainsi :
-    - par défaut, les pages affichent les résultats de RÉFÉRENCE, instantanément ;
-    - si l'utilisateur a lancé une simulation sur un cycle personnalisé (page
-      dédiée), ces clés existent déjà et ont la priorité : rien n'est écrasé.
+def afficher_simulation_personnalisee(st, donnees) -> None:
+    """Enregistre une simulation lancée dans l'application et la fait afficher
+    par toutes les pages (le choix de la barre latérale suit au run suivant)."""
+    st.session_state[CLE_PERSONNALISE] = donnees
+    st.session_state[CLE_CYCLE_DEMANDE] = CYCLE_PERSONNALISE
+    _installer(st, donnees, CYCLE_PERSONNALISE, "simulation lancée dans l'application")
 
-    Retourne la source utilisée ("référence précalculée" ou "déjà en session").
-    """
-    if "resultats_simulation" in st.session_state and "cycle_pret" in st.session_state:
-        return st.session_state.get("_source_donnees", "déjà en session")
 
-    donnees = charger_reference(chemin)
+def _installer(st, donnees, choix, source):
     st.session_state["resultats_simulation"] = donnees["resultats"]
     st.session_state["cycle_pret"] = donnees["cycle_df"]
     st.session_state["avertissements_simulation"] = donnees.get("avertissements", [])
-    st.session_state["soc_eb0"] = donnees["meta"].get("soc_eb0", 1.0)
-    st.session_state["soc_pb0"] = donnees["meta"].get("soc_pb0", 1.0)
     st.session_state["pas_alpha"] = donnees["meta"].get("pas_alpha")
-    st.session_state["_source_donnees"] = "référence précalculée"
-    return "référence précalculée"
+    st.session_state["meta_simulation"] = donnees["meta"]
+    # Cohérence physique (E3) précalculée avec la référence, si disponible.
+    st.session_state["coherence_simulation"] = donnees.get("coherence")
+    st.session_state["_donnees_chargees"] = choix
+    st.session_state["_source_donnees"] = source
+
+
+def libelle_cycle_affiche(st) -> str:
+    """Nom du cycle dont les résultats sont affichés."""
+    choix = st.session_state.get("_donnees_chargees", "artemis")
+    if choix == CYCLE_PERSONNALISE:
+        meta = st.session_state.get(CLE_PERSONNALISE, {}).get("meta", {})
+        return f"Ma dernière simulation : {meta.get('cycle', 'cycle personnalisé')}"
+    return CYCLES_REFERENCE.get(choix, (choix,))[0]
+
+
+def assurer_donnees_session(st, chemin=None) -> str:
+    """Met en session les résultats du cycle choisi dans la barre latérale :
+    `st.session_state["resultats_simulation"]` et `["cycle_pret"]`, que lisent
+    toutes les pages d'analyse.
+
+    - Cycles de référence : lus dans leur fichier précalculé (instantané).
+    - « Ma dernière simulation » : celle lancée dans l'application, conservée
+      à part pour pouvoir passer d'un cycle à l'autre sans la perdre.
+
+    Les résultats et leur cycle sont toujours installés ensemble : préparer un
+    nouveau cycle (page 2) ne peut plus les désaccorder.
+
+    Retourne la source utilisée.
+    """
+    choix = st.session_state.get(CLE_CYCLE, "artemis")
+    if choix == CYCLE_PERSONNALISE and CLE_PERSONNALISE not in st.session_state:
+        choix = "artemis"
+    if st.session_state.get("_donnees_chargees") == choix and "resultats_simulation" in st.session_state:
+        return st.session_state.get("_source_donnees", "déjà en session")
+
+    if choix == CYCLE_PERSONNALISE:
+        _installer(st, st.session_state[CLE_PERSONNALISE], choix, "simulation lancée dans l'application")
+    else:
+        _installer(st, charger_reference(chemin or CYCLES_REFERENCE[choix][1]), choix, "référence précalculée")
+    return st.session_state["_source_donnees"]
 
 
 def recalculer_cout_physique(traj: dict, p_dem) -> np.ndarray:
@@ -127,6 +182,45 @@ def recalculer_cout_physique(traj: dict, p_dem) -> np.ndarray:
 def _somme_wh(puissance) -> float:
     """Intègre une puissance (W, pas de 1 s) en énergie (Wh)."""
     return float(np.nansum(np.asarray(puissance, dtype=float))) * core.DT_SECONDS / 3600.0
+
+
+# Découpage temporel des notebooks (01_configuration.ipynb) : les réseaux sont
+# entraînés sur les premiers 50 % du cycle Artemis, validés sur les 25 % suivants
+# et testés sur les 25 % restants, qu'ils n'ont jamais vus.
+PART_ENTRAINEMENT, PART_VALIDATION = 0.50, 0.25
+
+
+def debut_partie_test(n: int) -> int:
+    """Premier instant de la partie test du cycle Artemis (n instants)."""
+    return int(n * PART_ENTRAINEMENT) + int(n * PART_VALIDATION)
+
+
+def cycle_artemis_affiche(st) -> bool:
+    """Vrai si les résultats affichés portent sur le cycle Artemis, le seul dont
+    une partie a servi à l'entraînement."""
+    choix = st.session_state.get("_donnees_chargees")
+    if choix == CYCLE_PERSONNALISE:
+        meta = st.session_state.get(CLE_PERSONNALISE, {}).get("meta", {})
+        return meta.get("cycle") == CYCLES_REFERENCE["artemis"][0]
+    return choix in (None, "artemis")
+
+
+def restreindre(donnees: dict, debut: int, fin=None) -> dict:
+    """Mêmes données {resultats, cycle_df}, limitées aux instants [debut, fin)."""
+    df = donnees["cycle_df"]
+    n = len(df)
+    fin = n if fin is None else fin
+    resultats = {}
+    for nom, traj in donnees["resultats"].items():
+        coupe = {}
+        for cle, valeur in traj.items():
+            v = np.asarray(valeur) if isinstance(valeur, (list, np.ndarray)) else None
+            if v is not None and v.ndim == 1 and len(v) in (n, n + 1):
+                coupe[cle] = v[debut: fin + (len(v) - n)]
+            else:
+                coupe[cle] = valeur
+        resultats[nom] = coupe
+    return {"resultats": resultats, "cycle_df": df.iloc[debut:fin].reset_index(drop=True)}
 
 
 def calculer_metriques(donnees: dict) -> dict:
@@ -299,8 +393,9 @@ EXPLICABILITE = {
     "EMS_MLP_neurosymbolic": (
         3,
         "Neuro-symbolique : la décision se décompose exactement en base floue "
-        "(règles expertes) + correction neuronale bornée à ±0,2 ; la correction "
-        "elle-même reste opaque, mais son poids dans la décision est mesurable.",
+        "(règles expertes) + correction neuronale bornée à ±0,2, sous le contrôle d'un "
+        "garde-fou symbolique (règles R14/R16) ; la correction elle-même reste opaque, "
+        "mais son poids dans la décision est mesurable.",
     ),
     "EMS_LSTM_neurosymbolic": (
         2,

@@ -31,6 +31,27 @@ streamlit run Accueil.py
 
 `torch_geometric` (nécessaire uniquement pour `EMS_GNN`) est importé de façon paresseuse : son absence ne bloque pas les 6 autres stratégies.
 
+### Avant chaque push : tests
+
+```bash
+python -m pytest tests
+```
+
+Chaque page de l'application est exécutée ; une erreur (faute de frappe, import manquant) fait échouer les tests. Ils tournent aussi sur GitHub à chaque push (`.github/workflows/tests.yml`).
+
+### Régénérer les données et les modèles
+
+Les packs sont calculés à partir des cellules (`ems_core.py`) : EB 12,6 kWh / 28 Ah, PB 3,6 kWh / 9 Ah. Après un changement de paramètres :
+
+```bash
+python scripts/generer_cycles.py                       # Artemis x6 et WLTC x4 (data/)
+jupyter nbconvert --to notebook --execute --inplace 0[2-9]_*.ipynb 1[0-2]_*.ipynb   # réentraînement
+python scripts/run_simulations.py --avec-gnn                                          # référence Artemis
+python scripts/run_simulations.py --avec-gnn --cycle data/wltc.csv --nom simulation_wltc
+```
+
+Les réseaux sont entraînés sur les premiers 50 % du cycle Artemis, validés sur les 25 % suivants et testés sur les 25 % restants ; le cycle WLTC n'est jamais vu à l'entraînement.
+
 ---
 
 ## 2. Fichiers nécessaires au fonctionnement des modèles
@@ -63,11 +84,15 @@ Sans ces fichiers, chaque modèle concerné tourne quand même (avec un avertiss
 hess_graphs.pt
 ```
 
-### Cycle de conduite de référence — `data/`
+### Cycles de conduite de référence — `data/`
 
 ```text
-Artemis.csv
+Artemis.csv   # Artemis urbain + routier, 6 répétitions (12 456 s, 133 km)
+wltc.csv      # WLTC classe 3, 4 répétitions (7 204 s, 93 km), jamais vu à l'entraînement
 ```
+
+Générés par `scripts/generer_cycles.py`. Les résultats précalculés correspondants sont dans
+`results/precomputed/` (`simulation_reference.joblib`, `simulation_wltc.joblib`).
 
 ---
 

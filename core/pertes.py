@@ -10,12 +10,12 @@ batterie Puissance est directement sur le bus DC.
 Pertes estimées à chaque pas de temps :
 - batterie Énergie : R_EB·I_EB², avec R_EB = r_cellule × n_série / n_parallèle ;
 - batterie Puissance : R_PB·I_PB² ;
-- convertisseur : (1 − η)·|P_conv|.
+- convertisseur : (1 − η(P_conv))·|P_conv|, η suivant la courbe mesurée (fig. 33).
 
-Limite assumée, affichée à l'utilisateur : les trajectoires ont été simulées
-SANS pertes. Ce bilan est calculé après coup ; il sert à comparer les
-stratégies, pas à dire si le pack terminerait le cycle une fois les pertes
-prises en compte.
+Par défaut, les trajectoires sont simulées SANS pertes, comme dans l'article :
+ce bilan est alors calculé après coup. L'option « inclure les pertes dans le
+SOC » de la page « Lancer une simulation » les intègre à la simulation elle-même
+(ems_core.set_pertes), avec le même modèle.
 """
 
 import numpy as np
@@ -24,35 +24,27 @@ import ems_core as core
 
 
 # Rendement du convertisseur PSFB mesuré à puissance nominale ([1], fig. 33).
-# Il est plus faible à charge partielle (environ 91,5 % à 1,2 kW).
+# Les pertes utilisent la courbe mesurée complète (ems_core.rendement_convertisseur),
+# plus basse à charge partielle : environ 91,5 % à 1,2 kW.
 RENDEMENT_CONVERTISSEUR = 0.955
 
 
 def resistances_packs():
     """Résistances internes des packs (Ω), à partir des données par cellule."""
-    r_eb = core.CELL_EB_RINT_OHM * core.CELL_EB_N_SERIE / core.CELL_EB_N_PARALLELE
-    r_pb = core.CELL_PB_RINT_OHM * core.CELL_PB_N_SERIE / core.CELL_PB_N_PARALLELE
-    return r_eb, r_pb
+    return core.R_EB_PACK_OHM, core.R_PB_PACK_OHM
 
 
-def pertes_par_pas(traj, rendement=RENDEMENT_CONVERTISSEUR):
+def pertes_par_pas(traj):
     """Puissances perdues (W) à chaque pas : batterie Énergie, batterie Puissance,
-    convertisseur."""
-    r_eb, r_pb = resistances_packs()
-    i_eb = np.asarray(traj["I_EB"], dtype=float)
-    i_pb = np.asarray(traj["I_PB"], dtype=float)
-    p_conv = (core.V_EB_PACK_NOM - core.V_PB_PACK_NOM) * i_eb
-    return {
-        "eb": r_eb * i_eb ** 2,
-        "pb": r_pb * i_pb ** 2,
-        "convertisseur": (1.0 - rendement) * np.abs(p_conv),
-    }
+    convertisseur (même modèle que les pertes incluses dans le SOC)."""
+    eb, pb, conv = core.pertes_instantanees(traj["P_EB"], traj["P_PB"])
+    return {"eb": eb, "pb": pb, "convertisseur": conv}
 
 
-def bilan_pertes(traj, rendement=RENDEMENT_CONVERTISSEUR):
+def bilan_pertes(traj):
     """Pertes estimées (Wh) d'une trajectoire : EB, PB, convertisseur, total,
     et leur part dans l'énergie de traction fournie au bus."""
-    pas = pertes_par_pas(traj, rendement)
+    pas = pertes_par_pas(traj)
     h = core.DT_SECONDS / 3600.0
 
     eb = float(np.sum(pas["eb"])) * h

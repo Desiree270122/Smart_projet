@@ -1,15 +1,18 @@
-streamlit>=1.50
-pandas>=1.5
-numpy>=1.23
-openpyxl>=3.1
-xlrd>=2.0
-scikit-learn>=1.2
-torch>=2.0
-torch_geometric>=2.4
-matplotlib>=3.7
-plotly>=5.15
-rdflib>=6.3
-networkx>=3.0
-joblib>=1.2
-
-xlsxwriter>=3.1
+# Versions bornées par version majeure : une nouvelle version majeure (qui peut
+# changer l'API) ne s'installe pas toute seule sur Streamlit Cloud.
+# Testé avec : streamlit 1.58, pandas 3.0, numpy 2.3, torch 2.11, torch_geometric 2.7.
+# pandas >= 3 et numpy >= 2 sont nécessaires pour relire les résultats précalculés.
+streamlit>=1.50,<2
+pandas>=3.0,<4
+numpy>=2.0,<3
+openpyxl>=3.1,<4
+xlrd>=2.0,<3
+scikit-learn>=1.2,<2
+torch>=2.0,<3
+torch_geometric>=2.4,<3
+matplotlib>=3.7,<4
+plotly>=5.15,<7
+rdflib>=6.3,<8
+networkx>=3.0,<4
+joblib>=1.2,<2
+xlsxwriter>=3.1,<4

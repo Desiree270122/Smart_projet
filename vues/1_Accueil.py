@@ -13,9 +13,10 @@ sys.path.insert(0, str(DOSSIER_PROJET))
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
+from core.format import SEPARATEURS_PLOTLY, nombre
 
 import ems_core as core
-from core.resultats import assurer_donnees_session, calculer_metriques, nom_affichage
+from core.resultats import assurer_donnees_session, calculer_metriques, libelle_cycle_affiche, nom_affichage
 from core.style import (
     COULEUR_CONVERTISSEUR,
     COULEUR_DECISION,
@@ -92,11 +93,10 @@ strategie = c_mod.selectbox(
     index=noms.index("EMS_power_limitation") if "EMS_power_limitation" in noms else 0,
     format_func=nom_affichage,
 )
-cycle = (
-    "Artemis urbain + routier, répété 7 fois (référence)"
-    if source == "référence précalculée" else "Cycle personnalisé (simulation de la session)"
+c_cyc.selectbox(
+    "Cycle de conduite", [libelle_cycle_affiche(st)], disabled=True,
+    help="Changez de cycle dans la barre latérale, ou lancez une simulation sur un autre cycle.",
 )
-c_cyc.selectbox("Cycle de conduite", [cycle], help="Pour un autre cycle, lancez une simulation.")
 with c_btn:
     st.write("")
     if st.button("▶ Autre cycle", width="stretch", help="Préparer et lancer une simulation sur un autre cycle"):
@@ -127,18 +127,18 @@ non_fourni = m["energie_non_servie_wh"]
 
 st.subheader(f"État du système avec {nom_affichage(strategie)}")
 l1 = st.columns(3)
-l1[0].metric("Puissance demandée (max)", f"{p_dem.max() / 1000:.1f} kW",
-             help=f"Moyenne en traction : {p_dem[traction].mean() / 1000:.1f} kW", border=True)
-l1[1].metric("SOC final · batterie Énergie", f"{soc_eb[-1] * 100:.1f} %", border=True)
-l1[2].metric("SOC final · batterie Puissance", f"{soc_pb[-1] * 100:.1f} %", border=True)
+l1[0].metric("Puissance demandée (max)", f"{nombre(p_dem.max() / 1000, 1)} kW",
+             help=f"Moyenne en traction : {nombre(p_dem[traction].mean() / 1000, 1)} kW", border=True)
+l1[1].metric("SOC final · batterie Énergie", f"{nombre(soc_eb[-1] * 100, 1)} %", border=True)
+l1[2].metric("SOC final · batterie Puissance", f"{nombre(soc_pb[-1] * 100, 1)} %", border=True)
 l2 = st.columns(3)
-l2[0].metric("Rendement du HESS (estimé)", f"{m['rendement_hess'] * 100:.2f} %", border=True)
-l2[1].metric("Écart entre les SOC (RMSE)", f"{m['rmse_delta_soc'] * 100:.1f} pts",
-             help=f"Écart maximal : {m['delta_soc_max'] * 100:.1f} points", border=True)
+l2[0].metric("Rendement du HESS (estimé)", f"{nombre(m['rendement_hess'] * 100, 2)} %", border=True)
+l2[1].metric("Écart entre les SOC (RMSE)", f"{nombre(m['rmse_delta_soc'] * 100, 1)} pts",
+             help=f"Écart maximal : {nombre(m['delta_soc_max'] * 100, 1)} points", border=True)
 l2[2].metric(
     "Contraintes et demande",
     "✓ respectées" if violations == 0 and non_fourni < 1 else "✗ non respectées",
-    help=f"{violations} violation(s) de SOC ou de courant ; {non_fourni:.0f} Wh de demande non fournie",
+    help=f"{violations} violation(s) de SOC ou de courant ; {nombre(non_fourni, 0)} Wh de demande non fournie",
     border=True,
 )
 
@@ -157,7 +157,7 @@ fig_soc = go.Figure(
 fig_soc.add_hline(y=core.SOC_EB_MIN * 100, line=dict(color=COULEUR_VIOLATION, dash="dot", width=1),
                   annotation_text="SOC minimal", annotation_position="bottom right")
 fig_soc.update_layout(
-    height=300, margin=dict(t=10, b=40, l=10, r=10), hovermode="x unified",
+    separators=SEPARATEURS_PLOTLY, height=300, margin=dict(t=10, b=40, l=10, r=10), hovermode="x unified",
     xaxis_title="Temps (min)", yaxis=dict(title="SOC (%)", range=[0, 102]),
     legend=dict(orientation="h", y=1.12, x=0),
 )
@@ -176,7 +176,7 @@ fig_p = go.Figure(
     ]
 )
 fig_p.update_layout(
-    height=380, margin=dict(t=10, b=10, l=10, r=10), hovermode="x unified",
+    separators=SEPARATEURS_PLOTLY, height=380, margin=dict(t=10, b=10, l=10, r=10), hovermode="x unified",
     yaxis_title="Puissance (kW)",
     xaxis=dict(title="Temps (min)", rangeslider=dict(visible=True, thickness=0.08), range=[60, 90]),
     legend=dict(orientation="h", y=1.12, x=0),
@@ -191,21 +191,21 @@ part_pb = float(np.sum(p_pb[traction])) / float(np.sum(p_dem[traction])) * 100 i
 temps_pb = float(np.mean(p_pb[traction] > 100.0)) * 100 if traction.any() else 0.0
 distance = float(np.sum(df["speed"].to_numpy(dtype=float)[:n])) * core.DT_SECONDS / 1000 if "speed" in df.columns else float("nan")
 phrases = [
-    f"Sur ce cycle ({n * core.DT_SECONDS / 60:.0f} min, {distance:.0f} km), la demande atteint "
-    f"{p_dem.max() / 1000:.1f} kW en traction et {p_dem.min() / 1000:.1f} kW au freinage.",
-    f"{nom_affichage(strategie)} confie **{part_pb:.0f} %** de l'énergie de traction à la batterie "
-    f"Puissance, qui intervient pendant {temps_pb:.0f} % du temps de traction.",
-    f"L'écart entre les deux SOC atteint au plus **{m['delta_soc_max'] * 100:.1f} points** (écart "
-    f"quadratique moyen {m['rmse_delta_soc'] * 100:.1f} points) ; les SOC finaux sont de "
-    f"{soc_eb[-1] * 100:.1f} % (Énergie) et {soc_pb[-1] * 100:.1f} % (Puissance).",
+    f"Sur ce cycle ({nombre(n * core.DT_SECONDS / 60, 0)} min, {nombre(distance, 0)} km), la demande atteint "
+    f"{nombre(p_dem.max() / 1000, 1)} kW en traction et {nombre(p_dem.min() / 1000, 1)} kW au freinage.",
+    f"{nom_affichage(strategie)} confie **{nombre(part_pb, 0)} %** de l'énergie de traction à la batterie "
+    f"Puissance, qui intervient pendant {nombre(temps_pb, 0)} % du temps de traction.",
+    f"L'écart entre les deux SOC atteint au plus **{nombre(m['delta_soc_max'] * 100, 1)} points** (écart "
+    f"quadratique moyen {nombre(m['rmse_delta_soc'] * 100, 1)} points) ; les SOC finaux sont de "
+    f"{nombre(soc_eb[-1] * 100, 1)} % (Énergie) et {nombre(soc_pb[-1] * 100, 1)} % (Puissance).",
     (
         "Aucune violation de SOC ni de courant, et toute la puissance demandée a été fournie."
         if violations == 0 and non_fourni < 1
-        else f"**Attention** : {violations} violation(s) de contrainte et {non_fourni:.0f} Wh de "
+        else f"**Attention** : {violations} violation(s) de contrainte et {nombre(non_fourni, 0)} Wh de "
         "demande non fournie ; les autres indicateurs de ce modèle sont donc flattés."
     ),
-    f"Rendement estimé du HESS : **{m['rendement_hess'] * 100:.2f} %** ({m['pertes_totales_wh']:.0f} Wh "
-    f"de pertes estimées, dont {m['pertes_convertisseur_wh']:.0f} Wh dans le convertisseur).",
+    f"Rendement estimé du HESS : **{nombre(m['rendement_hess'] * 100, 2)} %** ({nombre(m['pertes_totales_wh'], 0)} Wh "
+    f"de pertes estimées, dont {nombre(m['pertes_convertisseur_wh'], 0)} Wh dans le convertisseur).",
 ]
 with st.container(border=True):
     st.markdown(" ".join(phrases))

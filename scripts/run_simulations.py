@@ -98,6 +98,11 @@ def main():
         help="Inclure EMS_GNN (nécessite torch_geometric).",
     )
     parser.add_argument(
+        "--nom",
+        default="simulation_reference",
+        help="Nom du fichier produit, sans extension (ex. simulation_wltc pour le cycle WLTC).",
+    )
+    parser.add_argument(
         "--sortie",
         default=None,
         help="Dossier de sortie (défaut : results/precomputed/).",
@@ -152,13 +157,27 @@ def main():
         "strategies": sorted(resultats.keys()),
         "duree_simulation_s": duree,
     }
-    chemin_joblib = dossier_sortie / "simulation_reference.joblib"
+    # Cohérence physique des décisions (critère E3), coûteuse : calculée ici une
+    # fois pour toutes plutôt qu'à la première visite de l'application.
+    from core import xai
+
+    print("      -> cohérence physique (E3) de chaque stratégie")
+    coherence = {}
+    for nom in resultats:
+        try:
+            coherence[nom] = xai.coherence_physique(nom, cycle_df, resultats[nom])
+            print(f"         {nom} : {coherence[nom][0] * 100:.0f} %")
+        except Exception as exc:  # noqa: BLE001 - un échec n'empêche pas la sauvegarde
+            print(f"         {nom} : non calculée ({exc})")
+
+    chemin_joblib = dossier_sortie / f"{args.nom}.joblib"
     joblib.dump(
         {
             "resultats": resultats,
             "cycle_df": cycle_df,
             "avertissements": avertissements,
             "meta": meta,
+            "coherence": coherence,
         },
         chemin_joblib,
     )
@@ -170,7 +189,7 @@ def main():
         cout = traj.get("cost")
         if cout is not None:
             resume[nom] = float(np.nanmean(np.asarray(cout, dtype=float)))
-    chemin_resume = dossier_sortie / "resume_couts.json"
+    chemin_resume = dossier_sortie / f"resume_couts_{args.nom}.json"
     with open(chemin_resume, "w", encoding="utf-8") as f:
         json.dump(resume, f, indent=2, ensure_ascii=False)
     print(f"      -> résumé des coûts : {chemin_resume}")

@@ -11,12 +11,16 @@ DOSSIER_PROJET = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_PROJET))
 
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from core.format import SEPARATEURS_PLOTLY, nombre
 
 import ems_core as core
-from core.pertes import RENDEMENT_CONVERTISSEUR, pertes_par_pas
-from core.resultats import assurer_donnees_session, calculer_metriques, nom_affichage
+from core.pertes import pertes_par_pas
+from core.resultats import (
+    assurer_donnees_session, calculer_metriques, cycle_artemis_affiche, debut_partie_test, nom_affichage,
+)
 from core.style import (
     COULEUR_CONVERTISSEUR,
     COULEUR_DEMANDE,
@@ -70,7 +74,7 @@ m = _indicateurs(strategie, float(np.nansum(traj["alpha_final"])))
 if m["energie_non_servie_wh"] >= 1.0:
     st.warning(
         f"{nom_affichage(strategie)} ne fournit pas toute la puissance demandée "
-        f"({m['energie_non_servie_wh']:.0f} Wh manquants, jusqu'à {m['ecart_puissance_max_kw']:.1f} kW "
+        f"({nombre(m['energie_non_servie_wh'], 0)} Wh manquants, jusqu'à {nombre(m['ecart_puissance_max_kw'], 1)} kW "
         "à un instant) : son énergie consommée et son rendement en sont flattés."
     )
 
@@ -78,18 +82,18 @@ if m["energie_non_servie_wh"] >= 1.0:
 # Les six indicateurs du protocole
 
 l1 = st.columns(3)
-l1[0].metric("M1 · Énergie consommée", f"{m['energie_km_wh']:.1f} Wh/km", border=True,
-             help=f"{m['energie_consommee_wh'] / 1000:.2f} kWh sur le cycle, pertes estimées comprises")
-l1[1].metric("M2 · Rendement du HESS", f"{m['rendement_hess'] * 100:.2f} %", border=True,
+l1[0].metric("M1 · Énergie consommée", f"{nombre(m['energie_km_wh'], 1)} Wh/km", border=True,
+             help=f"{nombre(m['energie_consommee_wh'] / 1000, 2)} kWh sur le cycle, pertes estimées comprises")
+l1[1].metric("M2 · Rendement du HESS", f"{nombre(m['rendement_hess'] * 100, 2)} %", border=True,
              help="Estimé : pertes calculées après coup sur une simulation sans pertes")
-l1[2].metric("M3 · Écart moyen des SOC", f"{m['rmse_delta_soc'] * 100:.1f} pts", border=True,
-             help=f"Écart quadratique moyen ; écart maximal {m['delta_soc_max'] * 100:.1f} points")
+l1[2].metric("M3 · Écart moyen des SOC", f"{nombre(m['rmse_delta_soc'] * 100, 1)} pts", border=True,
+             help=f"Écart quadratique moyen ; écart maximal {nombre(m['delta_soc_max'] * 100, 1)} points")
 l2 = st.columns(3)
-l2[0].metric("M4 · Pertes du convertisseur", f"{m['pertes_convertisseur_wh']:.0f} Wh", border=True)
-l2[1].metric("M5 · Violations", f"{m['nb_violations'] + m['nb_violations_courant']:.0f}", border=True,
-             help=f"{m['nb_violations']:.0f} de SOC, {m['nb_violations_courant']:.0f} de courant")
-l2[2].metric("M6 · Erreur de suivi de puissance", f"{m['rmse_puissance_kw']:.2f} kW", border=True,
-             help=f"Écart quadratique moyen en traction ; écart maximal {m['ecart_puissance_max_kw']:.1f} kW")
+l2[0].metric("M4 · Pertes du convertisseur", f"{nombre(m['pertes_convertisseur_wh'], 0)} Wh", border=True)
+l2[1].metric("M5 · Violations", f"{nombre(m['nb_violations'] + m['nb_violations_courant'], 0)}", border=True,
+             help=f"{nombre(m['nb_violations'], 0)} de SOC, {nombre(m['nb_violations_courant'], 0)} de courant")
+l2[2].metric("M6 · Erreur de suivi de puissance", f"{nombre(m['rmse_puissance_kw'], 2)} kW", border=True,
+             help=f"Écart quadratique moyen en traction ; écart maximal {nombre(m['ecart_puissance_max_kw'], 1)} kW")
 
 temps_min = (df["time"].to_numpy(dtype=float)[:n] if "time" in df.columns else np.arange(n)) / 60.0
 p_dem = df["hasPower"].to_numpy(dtype=float)[:n]
@@ -110,8 +114,13 @@ fig_p = go.Figure(
 )
 fig_p.add_hline(y=core.P_EB_MAX_W / 1000, line=dict(color=COULEUR_SECONDAIRE, dash="dot", width=1),
                 annotation_text="limite de la batterie Énergie", annotation_position="top left")
+if cycle_artemis_affiche(st):
+    fig_p.add_vrect(
+        x0=temps_min[debut_partie_test(n)], x1=temps_min[-1], fillcolor=COULEUR_SECONDAIRE, opacity=0.12,
+        line_width=0, annotation_text="partie test (jamais vue par les réseaux)", annotation_position="top right",
+    )
 fig_p.update_layout(
-    height=380, margin=dict(t=10, b=10, l=10, r=10), hovermode="x unified", yaxis_title="Puissance (kW)",
+    separators=SEPARATEURS_PLOTLY, height=380, margin=dict(t=10, b=10, l=10, r=10), hovermode="x unified", yaxis_title="Puissance (kW)",
     xaxis=dict(title="Temps (min)", rangeslider=dict(visible=True, thickness=0.08), range=[60, 90]),
     legend=dict(orientation="h", y=1.12, x=0),
 )
@@ -135,7 +144,7 @@ fig_soc.add_hline(y=core.SOC_EB_MIN * 100, line=dict(color=COULEUR_VIOLATION, da
 fig_soc.add_hline(y=core.SOC_EB_MAX * 100, line=dict(color=COULEUR_REFERENCE, dash="dot", width=1),
                   annotation_text="SOC maximal", annotation_position="top right")
 fig_soc.update_layout(
-    height=320, margin=dict(t=10, b=40, l=10, r=10), hovermode="x unified",
+    separators=SEPARATEURS_PLOTLY, height=320, margin=dict(t=10, b=40, l=10, r=10), hovermode="x unified",
     xaxis_title="Temps (min)", yaxis=dict(title="SOC (%)", range=[0, 105]),
     legend=dict(orientation="h", y=1.12, x=0),
 )
@@ -168,24 +177,71 @@ fig_l = go.Figure(
     ]
 )
 fig_l.update_layout(
-    height=320, margin=dict(t=10, b=40, l=10, r=10), hovermode="x unified",
+    separators=SEPARATEURS_PLOTLY, height=320, margin=dict(t=10, b=40, l=10, r=10), hovermode="x unified",
     xaxis_title="Temps (min)", yaxis_title="Pertes cumulées (Wh)", legend=dict(orientation="h", y=1.12, x=0),
 )
 st.plotly_chart(fig_l, width="stretch")
 p1, p2, p3, p4 = st.columns(4)
-p1.metric("Batterie Énergie", f"{cumul['eb'][-1]:.0f} Wh")
-p2.metric("Batterie Puissance", f"{cumul['pb'][-1]:.0f} Wh")
-p3.metric("Convertisseur", f"{cumul['convertisseur'][-1]:.0f} Wh")
-p4.metric("Pertes totales", f"{total[-1]:.0f} Wh")
+p1.metric("Batterie Énergie", f"{nombre(cumul['eb'][-1], 0)} Wh")
+p2.metric("Batterie Puissance", f"{nombre(cumul['pb'][-1], 0)} Wh")
+p3.metric("Convertisseur", f"{nombre(cumul['convertisseur'][-1], 0)} Wh")
+p4.metric("Pertes totales", f"{nombre(total[-1], 0)} Wh")
+
+pertes_dans_soc = bool((st.session_state.get("meta_simulation") or {}).get("pertes_dans_soc"))
+reserve = (
+    (float(traj["SOC_EB"][-1]) - core.SOC_EB_MIN) * core.ENERGY_EB_WH
+    + (float(traj["SOC_PB"][-1]) - core.SOC_PB_MIN) * core.ENERGY_PB_WH
+)
+if pertes_dans_soc:
+    st.info(
+        f"Pertes incluses dans la simulation : il reste {nombre(reserve, 0)} Wh utilisables en fin de cycle, "
+        "pertes déjà déduites."
+    )
+elif reserve - total[-1] >= 0:
+    st.success(
+        f"Il reste {nombre(reserve, 0)} Wh utilisables en fin de cycle, plus que les {nombre(total[-1], 0)} Wh de pertes "
+        f"estimées : avec les pertes, la stratégie finirait le cycle ({nombre(reserve - total[-1], 0)} Wh de marge)."
+    )
+else:
+    st.warning(
+        f"Il reste {nombre(reserve, 0)} Wh utilisables en fin de cycle, moins que les {nombre(total[-1], 0)} Wh de pertes "
+        f"estimées : avec les pertes, il manquerait environ {nombre(total[-1] - reserve, 0)} Wh. Pour le vérifier, "
+        "relancez la simulation avec les pertes incluses (page « Lancer une simulation »)."
+    )
 with st.expander("Hypothèses du calcul des pertes"):
     st.markdown(
-        f"- Résistances internes calculées à partir des cellules : {core.CELL_EB_RINT_OHM * 1000:.0f} mΩ × "
-        f"{core.CELL_EB_N_SERIE}/{core.CELL_EB_N_PARALLELE} pour l'EB, {core.CELL_PB_RINT_OHM * 1000:.1f} mΩ × "
+        f"- Résistances internes calculées à partir des cellules : {nombre(core.CELL_EB_RINT_OHM * 1000, 0)} mΩ × "
+        f"{core.CELL_EB_N_SERIE}/{core.CELL_EB_N_PARALLELE} pour l'EB, {nombre(core.CELL_PB_RINT_OHM * 1000, 1)} mΩ × "
         f"{core.CELL_PB_N_SERIE}/{core.CELL_PB_N_PARALLELE} pour la PB.\n"
-        f"- Convertisseur : rendement de {RENDEMENT_CONVERTISSEUR * 100:.1f} % (mesuré à puissance nominale, "
-        "plus faible à charge partielle), appliqué à la seule puissance qu'il traite.\n"
+        "- Convertisseur : rendement mesuré de l'article (fig. 33), de 91,5 % à 1,2 kW à 95,5 % vers "
+        "2,5 kW, appliqué à la seule puissance qu'il traite ; sous 1,2 kW, la valeur à 1,2 kW est conservée.\n"
         "- Tensions constantes, sans variation avec le SOC."
     )
+
+
+# Export
+
+export = pd.DataFrame(
+    {
+        "temps_s": temps_min * 60.0,
+        "P_demande_W": p_dem,
+        "P_EB_W": p_eb,
+        "P_PB_W": p_pb,
+        "alpha": np.asarray(traj["alpha_final"], dtype=float)[:n],
+        "SOC_EB": np.asarray(traj["SOC_EB"], dtype=float)[:n],
+        "SOC_PB": np.asarray(traj["SOC_PB"], dtype=float)[:n],
+        "pertes_EB_W": pas["eb"][:n],
+        "pertes_PB_W": pas["pb"][:n],
+        "pertes_convertisseur_W": pas["convertisseur"][:n],
+        "P_non_servie_W": np.asarray(traj["P_unserved"], dtype=float)[:n],
+    }
+)
+st.download_button(
+    f"Télécharger la trajectoire de {nom_affichage(strategie)} (CSV)",
+    export.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
+    file_name=f"trajectoire_{strategie}.csv",
+    mime="text/csv",
+)
 
 
 pied_navigation("vues/6_Resultats_et_Analyse.py")

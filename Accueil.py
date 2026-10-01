@@ -15,12 +15,29 @@ Chaque page est implémentée dans le dossier `vues/`.
 
 import streamlit as st
 
+from core.resultats import CLE_CYCLE, CLE_CYCLE_DEMANDE, cycles_disponibles
+
 
 st.set_page_config(
     page_title="2SMART — HESS",
     layout="wide",
 )
 
+
+# Cycle dont toutes les pages affichent les résultats. Une page peut demander
+# un autre cycle (après une simulation) : la demande est appliquée ici, avant
+# la création du widget, comme l'exige Streamlit.
+with st.sidebar:
+    if CLE_CYCLE_DEMANDE in st.session_state:
+        st.session_state[CLE_CYCLE] = st.session_state.pop(CLE_CYCLE_DEMANDE)
+    _cycles = cycles_disponibles(st)
+    if _cycles:
+        if st.session_state.get(CLE_CYCLE) not in _cycles:
+            st.session_state[CLE_CYCLE] = next(iter(_cycles))
+        st.selectbox(
+            "Cycle étudié", list(_cycles), format_func=_cycles.get, key=CLE_CYCLE,
+            help="Toutes les pages d'analyse affichent les résultats de ce cycle.",
+        )
 
 # En-tête de la barre latérale (identité de l'application).
 with st.sidebar:

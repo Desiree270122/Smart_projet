@@ -6,6 +6,7 @@ sys.path.insert(0, str(DOSSIER_PROJET))
 
 import pandas as pd
 import streamlit as st
+from core.format import SEPARATEURS_PLOTLY, nombre
 
 import ems_core as core
 from core.resultats import nom_affichage, famille, EXPLICABILITE
@@ -56,8 +57,8 @@ with st.expander("Architecture électrique du HESS (convertisseur à puissance p
         "- la batterie Puissance est branchée directement sur le bus DC ;\n"
         "- le convertisseur est placé **en série** entre les deux batteries : il pilote le "
         "courant de la batterie Énergie et ne traite que la différence de tension entre "
-        f"elles, soit **{_part_conv * 100:.1f} %** de la puissance de l'EB avec "
-        f"{core.V_EB_PACK_NOM:.0f} V et {core.V_PB_PACK_NOM:.1f} V ;\n"
+        f"elles, soit **{nombre(_part_conv * 100, 1)} %** de la puissance de l'EB avec "
+        f"{nombre(core.V_EB_PACK_NOM, 0)} V et {nombre(core.V_PB_PACK_NOM, 1)} V ;\n"
         "- le convertisseur n'étant pas réversible en tension, la batterie Énergie doit "
         "rester à une tension supérieure à celle de la batterie Puissance."
     )
@@ -151,12 +152,16 @@ FICHES = {
             "puis alpha final est ramené dans l'intervalle [0, 1].",
             "La décision se décompose donc exactement en base floue + correction : "
             "c'est la seule stratégie apprise dont on peut lire la part symbolique.",
+            f"Garde-fou symbolique : quand le SOC de la PB passe sous "
+            f"{core.MLP_NS_RESERVE_PB_SOC * 100:.0f} %, les règles R14 et R16 d'OntoHESS "
+            "reprennent la main en traction (l'EB d'abord, la PB pour le seul surplus), "
+            "pour garder l'énergie de la PB pour les pics.",
         ],
         "cible": "La même cible alpha* que le MLP, apprise sous forme de correction de la logique floue.",
         "entrees": (
             "État instantané, sortie de la logique floue, états symboliques de "
-            "l'ontologie, et les trois prédictions du LSTM (demande future, variations "
-            "de SOC des deux batteries) : 17 entrées, ce qui le rend dépendant du LSTM."
+            "l'ontologie, et les trois prédictions de NS-LSTM (demande future, variations "
+            "de SOC des deux batteries) : 17 entrées, ce qui le rend dépendant de NS-LSTM."
         ),
     },
     "EMS_LSTM": {
@@ -237,6 +242,7 @@ FLUX = {
     "EMS_MLP_neurosymbolic": [("Entrées", COULEUR_DEMANDE), ("Règles floues", COULEUR_REFERENCE),
                               ("alpha de base", COULEUR_DECISION),
                               (f"+ correction MLP bornée (±{core.MLP_NS_MAX_DELTA:g})", COULEUR_SECONDAIRE),
+                              ("garde-fou R14/R16 (réserve PB)", COULEUR_REFERENCE),
                               ("alpha final", COULEUR_DECISION)],
     "EMS_LSTM_neurosymbolic": [(f"Historique ({core.LSTM_WINDOW} s) + 4 états symboliques", COULEUR_DEMANDE),
                                ("LSTM", COULEUR_SECONDAIRE), ("alpha", COULEUR_DECISION)],
@@ -279,7 +285,8 @@ with ns1:
     st.info(
         "**NS-MLP** — le symbolique intervient comme **socle de décision** : les règles floues "
         "proposent une répartition, puis le MLP apprend une correction bornée. La décision se "
-        "décompose exactement en « règles + correction »."
+        "décompose exactement en « règles + correction », et un garde-fou symbolique "
+        "(règles R14/R16 d'OntoHESS) protège la réserve de la batterie Puissance."
     )
 with ns2:
     _carte("EMS_LSTM_neurosymbolic")

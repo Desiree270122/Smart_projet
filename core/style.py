@@ -2,7 +2,7 @@
 core/style.py — Couleurs partagées des stratégies EMS.
 
 Une stratégie garde la même couleur sur toutes les pages (Comparaison,
-Résultats & Analyse, ...) : les pages importent la palette d'ici au lieu de
+Résultats de simulation, ...) : les pages importent la palette d'ici au lieu de
 définir chacune la leur.
 """
 

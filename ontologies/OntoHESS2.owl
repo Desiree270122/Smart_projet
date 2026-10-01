@@ -3047,10 +3047,10 @@
     </owl:Restriction>
   </rdf:type>
   <hasVoltageBattery rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">450.0</hasVoltageBattery>
-  <iEB_max_value rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">30.47</iEB_max_value>
+  <iEB_max_value rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">28.0</iEB_max_value>
   <iEB_min_value rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-15.22</iEB_min_value>
   <socEB_minThreshold rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">20.0</socEB_minThreshold>
-  <hasCapacityBattery rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">13709.89</hasCapacityBattery>
+  <hasCapacityBattery rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">12601.57</hasCapacityBattery>
   <hasMassBattery rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">55.12</hasMassBattery>
   <hasEnergyDensityBattery rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">248.73</hasEnergyDensityBattery>
   <hasDischargePowerDensityBattery rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">12600.0</hasDischargePowerDensityBattery>
@@ -3073,7 +3073,7 @@
   <rdf:type rdf:resource="#PBPower"/>
   <rdf:type rdf:resource="#VoltagePB"/>
   <hasResistanceBattery rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">0.0</hasResistanceBattery>
-  <hasCapacityBattery rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">2987.12</hasCapacityBattery>
+  <hasCapacityBattery rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">3623.45</hasCapacityBattery>
   <hasMassBattery rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">50.02</hasMassBattery>
   <hasVoltageBattery rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">402.6</hasVoltageBattery>
   <hasEnergyDensityBattery rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">59.72</hasEnergyDensityBattery>

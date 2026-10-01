@@ -48,7 +48,7 @@ LIBELLES_ENTREES = {
 TRANSPARENCE = {
     "EMS_power_limitation": (3, "directe : équations et seuils physiques", "native : la branche appliquée"),
     "EMS_fuzzy_logic": (3, "directe : règles SI … ALORS explicites", "native : contribution exacte de chaque règle"),
-    "EMS_MLP_neurosymbolic": (2, "décomposable : règles floues + correction bornée", "exacte pour les règles ; la correction reste opaque"),
+    "EMS_MLP_neurosymbolic": (2, "décomposable : règles floues + correction bornée + garde-fou symbolique", "exacte pour les règles et le garde-fou ; la correction reste opaque"),
     "EMS_MLP": (1, "indirecte : réseau dense", "reconstruite : valeurs de Shapley"),
     "EMS_LSTM": (1, "indirecte : réseau récurrent", "reconstruite : valeurs de Shapley sur l'historique"),
     "EMS_LSTM_neurosymbolic": (1, "indirecte : réseau récurrent à entrées symboliques", "reconstruite : valeurs de Shapley, entrées symboliques nommées"),
@@ -174,24 +174,39 @@ def alpha_decision(strategie, df, traj, i, surcharges=None):
         fen = fenetre_lstm(cols, i, df, traj, surcharges)
         return float(_alpha_depuis_lstm(_lstm_lot(strategie, fen[None], p)[:, 2], p)[0])
     if strategie == "EMS_MLP_neurosymbolic":
-        # Reconstitution des 17 entrées : prédictions du LSTM sur la trajectoire de
-        # la stratégie, sortie floue, états symboliques (comme dans la simulation).
-        pred = _lstm_lot("EMS_LSTM", fenetre_lstm(core.LSTM_FEATURE_COLS, i, df, traj, surcharges)[None], p)[0]
-        a_f = float(core.alpha_fuzzy_calc(np.array([se]), np.array([sp]), np.array([p]), np.array([acc]))["alpha"][0])
-        valeurs = {
-            **s, "Pdem_pred_ns": float(pred[0]), "delta_soc_eb_pred_ns": float(pred[1]),
-            "delta_soc_pb_pred_ns": float(pred[2]), "alpha_ems_fuzzy_logic": a_f,
-            **{k: float(v) for k, v in core.compute_symbolic_states(p, se, sp).items()},
-        }
-        modele, scaler = _modele(strategie)
-        x = _normaliser(np.array([valeurs[c] for c in core.MLP_NS_INPUT_COLS]), scaler)
-        with torch.no_grad():
-            alpha, _, _ = modele(
-                torch.tensor([x.tolist()], dtype=torch.float32, device=core.DEVICE),
-                torch.tensor([a_f], dtype=torch.float32, device=core.DEVICE),
-            )
-        return float(alpha.item())
+        return decomposer_ns_mlp(df, traj, i, surcharges)["alpha"]
     raise KeyError(strategie)
+
+
+def decomposer_ns_mlp(df, traj, i, surcharges=None):
+    """Décision de NS-MLP en trois étapes, comme dans la simulation :
+    base floue (alpha_flou), correction bornée du réseau (alpha_reseau), puis
+    garde-fou symbolique de réserve de la PB (alpha)."""
+    s = situation(df, traj, i)
+    s.update(surcharges or {})
+    p, se, sp, acc = s["hasPower"], s["SOC_EB"], s["SOC_PB"], s["hasAcceleration"]
+    # Reconstitution des 17 entrées : prédictions du LSTM neuro-symbolique sur la
+    # trajectoire de la stratégie, sortie floue, états symboliques (comme dans la
+    # simulation et dans 12_EMS_MLP_neurosymbolic.ipynb).
+    pred = _lstm_lot(
+        "EMS_LSTM_neurosymbolic", fenetre_lstm(core.LSTM_NS_FEATURE_COLS, i, df, traj, surcharges)[None], p
+    )[0]
+    a_f = float(core.alpha_fuzzy_calc(np.array([se]), np.array([sp]), np.array([p]), np.array([acc]))["alpha"][0])
+    valeurs = {
+        **s, "Pdem_pred_ns": float(pred[0]), "delta_soc_eb_pred_ns": float(pred[1]),
+        "delta_soc_pb_pred_ns": float(pred[2]), "alpha_ems_fuzzy_logic": a_f,
+        **{k: float(v) for k, v in core.compute_symbolic_states(p, se, sp).items()},
+    }
+    modele, scaler = _modele("EMS_MLP_neurosymbolic")
+    x = _normaliser(np.array([valeurs[c] for c in core.MLP_NS_INPUT_COLS]), scaler)
+    with torch.no_grad():
+        alpha, _, _ = modele(
+            torch.tensor([x.tolist()], dtype=torch.float32, device=core.DEVICE),
+            torch.tensor([a_f], dtype=torch.float32, device=core.DEVICE),
+        )
+    a_r = float(alpha.item())
+    a_g, garde = core.garde_fou_reserve_pb(a_r, p, se, sp)
+    return {"alpha_flou": a_f, "alpha_reseau": a_r, "alpha": a_g, "garde_fou": garde}
 
 
 # 2 — Valeurs de Shapley exactes
