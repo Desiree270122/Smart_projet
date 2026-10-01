@@ -1,29 +1,38 @@
+"""
+Résultats de simulation : évolution du HESS au cours du cycle et performances
+de la stratégie sélectionnée. Pas de classement ici : la comparaison entre
+stratégies est dans « Comparaison des stratégies EMS ».
+"""
+
 import sys
 from pathlib import Path
 
 DOSSIER_PROJET = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_PROJET))
 
-import numpy as np
-import pandas as pd
+__________________________________________________import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
-from ems_core import DT_SECONDS
-from core.resultats import (
-    assurer_donnees_session,
-    calculer_metriques,
-    statistiques_detaillees,
-    nom_affichage,
+import ems_core as core
+from core.pertes import RENDEMENT_CONVERTISSEUR, pertes_par_pas
+from core.resultats import assurer_donnees_session, calculer_metriques, nom_affichage
+from core.style import (
+    COULEUR_CONVERTISSEUR,
+    COULEUR_DEMANDE,
+    COULEUR_EB,
+    COULEUR_PB,
+    COULEUR_REFERENCE,
+    COULEUR_SECONDAIRE,
+    COULEUR_VIOLATION,
 )
-from core.style import couleur
 from core.navigation import pied_navigation
 
 
-st.title("📈 Explorer les résultats")
+st.title("📈 Résultats de simulation")
 st.caption(
-    "Comment une stratégie se comporte-t-elle sur le cycle, comparée à une référence ? "
-    "Pour classer toutes les stratégies entre elles, voir « Comparer les méthodes »."
+    "Évolution du HESS au cours du cycle et analyse des performances de la stratégie "
+    "sélectionnée."
 )
 
 try:
@@ -39,197 +48,143 @@ if not resultats or df is None:
     st.warning("Aucune donnée disponible.")
     st.stop()
 
+noms = list(resultats.keys())
+c_s, c_src = st.columns([2, 3])
+strategie = c_s.selectbox(
+    "Stratégie", noms,
+    index=noms.index("EMS_power_limitation") if "EMS_power_limitation" in noms else 0,
+    format_func=nom_affichage,
+)
+c_src.caption(f"Source des données : {source}")
+
+traj = resultats[strategie]
+n = min(len(df), len(traj["P_EB"]))
+
 
 @st.cache_data(show_spinner="Calcul des indicateurs…")
-def _indicateurs(cle_source):
-    donnees = {"resultats": resultats, "cycle_df": df}
-    return statistiques_detaillees(donnees), calculer_metriques(donnees)
+def _indicateurs(strategie, signature):
+    return calculer_metriques({"resultats": {strategie: resultats[strategie]}, "cycle_df": df})[strategie]
 
 
-stats, metriques = _indicateurs(source)
-noms = list(resultats.keys())
-
-
-def _valeur(n, cle):
-    return float(metriques[n][cle] if cle in metriques[n] else stats[n][cle])
-
-
-# (libellé, clé, sens favorable, format, unité, échelle)
-INDICATEURS = [
-    ("SOC final de l'EB", "soc_eb_final", "max", "{:.1f}", "%", 100.0),
-    ("SOC final de la PB", "soc_pb_final", "max", "{:.1f}", "%", 100.0),
-    ("Courant efficace de la PB", "i_pb_rms", "min", "{:.1f}", "A", 1.0),
-    ("Pertes estimées", "pertes_totales_wh", "min", "{:.0f}", "Wh", 1.0),
-    ("Demande non fournie", "energie_non_servie_wh", "min", "{:.0f}", "Wh", 1.0),
-    ("Violations de SOC", "nb_violations", "min", "{:.0f}", "", 1.0),
-]
-
-
-# 1 — Choix de la stratégie et de la référence
-
-col_s, col_r = st.columns(2)
-defaut_ref = next((n for n in noms if "power_limitation" in n), noms[0])
-defaut_cible = next((n for n in noms if n != defaut_ref), noms[0])
-cible = col_s.selectbox("Stratégie à explorer", noms, index=noms.index(defaut_cible), format_func=nom_affichage)
-autres = [n for n in noms if n != cible]
-ref = col_r.selectbox(
-    "Comparer à", autres,
-    index=autres.index(defaut_ref) if defaut_ref in autres else 0, format_func=nom_affichage,
-)
-st.caption(f"Source des données : {source}")
-
-
-def _libelle(n):
-    return f"{nom_affichage(n)} ({'explorée' if n == cible else 'référence'})"
-
-
-def _trait(n):
-    if n == cible:
-        return dict(color=couleur(n), width=2.4)
-    return dict(color=couleur(n), width=1.8, dash="dash")
-
-
-for n in (cible, ref):
-    if _valeur(n, "energie_non_servie_wh") >= 1.0:
-        st.warning(
-            f"{nom_affichage(n)} ne fournit pas toute la puissance demandée "
-            f"({_valeur(n, 'energie_non_servie_wh'):.0f} Wh manquants) : le modèle étant sans "
-            "pertes, cette énergie reste dans les batteries et fait paraître son SOC final meilleur."
-        )
-
-
-# 2 — Écarts à la référence
-
-st.subheader("Écarts à la référence")
-st.caption(
-    f"Valeur de {nom_affichage(cible)}, écart avec {nom_affichage(ref)} (vert : avantage "
-    f"pour {nom_affichage(cible)}), et rang parmi les {len(noms)} stratégies."
-)
-
-
-def _rang(cle, sens, f, echelle, n):
-    """Rang (ex æquo à la précision affichée) de la stratégie n."""
-    valeurs = sorted({f.format(_valeur(m, cle) * echelle) for m in noms}, key=float, reverse=(sens == "max"))
-    return valeurs.index(f.format(_valeur(n, cle) * echelle)) + 1
-
-
-for ligne in (INDICATEURS[:3], INDICATEURS[3:]):
-    colonnes = st.columns(3)
-    for col, (lib, cle, sens, f, unite, echelle) in zip(colonnes, ligne):
-        v_c, v_r = _valeur(cible, cle) * echelle, _valeur(ref, cle) * echelle
-        ecart = v_c - v_r
-        unite_ecart = " pts" if unite == "%" else (f" {unite}" if unite else "")
-        with col:
-            st.metric(
-                lib,
-                f"{f.format(v_c)} {unite}".strip(),
-                delta=None if f.format(abs(ecart)) == f.format(0.0) else f.format(ecart) + unite_ecart,
-                delta_color="normal" if sens == "max" else "inverse",
-                border=True,
-            )
-            rang = _rang(cle, sens, f, echelle, cible)
-            st.caption(f"{rang}{'er' if rang == 1 else 'e'} sur {len(noms)}  ·  {'plus haut' if sens == 'max' else 'plus bas'} = mieux")
-
-
-# 3 — Utilisation des batteries
-
-st.subheader("Utilisation des batteries")
-st.caption("Une pente plus faible signifie que la batterie a été moins sollicitée.")
-
-
-def _trajectoire(cle_soc, titre):
-    fig = go.Figure()
-    for n in (ref, cible):
-        y = np.asarray(resultats[n][cle_soc], dtype=float) * 100.0
-        pas = max(1, len(y) // 2000)
-        fig.add_trace(
-            go.Scatter(
-                x=(np.arange(len(y)) * DT_SECONDS / 60.0)[::pas], y=y[::pas], mode="lines",
-                name=_libelle(n), line=_trait(n),
-                hovertemplate="%{x:.0f} min : %{y:.1f} %<extra></extra>",
-            )
-        )
-    fig.update_layout(
-        title=titre, xaxis_title="Temps écoulé (min)", yaxis=dict(title="SOC (%)", range=[0, 102]),
-        height=340, margin=dict(t=45, b=40, l=50, r=15), hovermode="x unified",
-        legend=dict(orientation="h", y=-0.25, x=0),
+m = _indicateurs(strategie, float(np.nansum(traj["alpha_final"])))
+if m["energie_non_servie_wh"] >= 1.0:
+    st.warning(
+        f"{nom_affichage(strategie)} ne fournit pas toute la puissance demandée "
+        f"({m['energie_non_servie_wh']:.0f} Wh manquants, jusqu'à {m['ecart_puissance_max_kw']:.1f} kW "
+        "à un instant) : son énergie consommée et son rendement en sont flattés."
     )
-    return fig
 
 
-g1, g2 = st.columns(2)
-g1.plotly_chart(_trajectoire("SOC_EB", "Batterie Énergie"), width="stretch")
-g2.plotly_chart(_trajectoire("SOC_PB", "Batterie Puissance"), width="stretch")
+# Les six indicateurs du protocole
+
+l1 = st.columns(3)
+l1[0].metric("M1 · Énergie consommée", f"{m['energie_km_wh']:.1f} Wh/km", border=True,
+             help=f"{m['energie_consommee_wh'] / 1000:.2f} kWh sur le cycle, pertes estimées comprises")
+l1[1].metric("M2 · Rendement du HESS", f"{m['rendement_hess'] * 100:.2f} %", border=True,
+             help="Estimé : pertes calculées après coup sur une simulation sans pertes")
+l1[2].metric("M3 · Écart moyen des SOC", f"{m['rmse_delta_soc'] * 100:.1f} pts", border=True,
+             help=f"Écart quadratique moyen ; écart maximal {m['delta_soc_max'] * 100:.1f} points")
+l2 = st.columns(3)
+l2[0].metric("M4 · Pertes du convertisseur", f"{m['pertes_convertisseur_wh']:.0f} Wh", border=True)
+l2[1].metric("M5 · Violations", f"{m['nb_violations'] + m['nb_violations_courant']:.0f}", border=True,
+             help=f"{m['nb_violations']:.0f} de SOC, {m['nb_violations_courant']:.0f} de courant")
+l2[2].metric("M6 · Erreur de suivi de puissance", f"{m['rmse_puissance_kw']:.2f} kW", border=True,
+             help=f"Écart quadratique moyen en traction ; écart maximal {m['ecart_puissance_max_kw']:.1f} kW")
+
+temps_min = (df["time"].to_numpy(dtype=float)[:n] if "time" in df.columns else np.arange(n)) / 60.0
+p_dem = df["hasPower"].to_numpy(dtype=float)[:n]
+p_eb = np.asarray(traj["P_EB"], dtype=float)[:n]
+p_pb = np.asarray(traj["P_PB"], dtype=float)[:n]
 
 
-# 4 — Sollicitation de la batterie Puissance
+# 1 — Répartition de la puissance
 
-st.subheader("Sollicitation de la batterie Puissance")
+st.subheader("Comment la demande de puissance est-elle répartie entre les deux batteries ?")
+st.caption("Faites glisser la réglette sous le graphique pour zoomer sur une portion du cycle.")
+fig_p = go.Figure(
+    [
+        go.Scattergl(x=temps_min, y=p_dem / 1000, name="Demande", line=dict(color=COULEUR_DEMANDE, width=1.2)),
+        go.Scattergl(x=temps_min, y=p_eb / 1000, name="Batterie Énergie", line=dict(color=COULEUR_EB, width=1.2)),
+        go.Scattergl(x=temps_min, y=p_pb / 1000, name="Batterie Puissance", line=dict(color=COULEUR_PB, width=1.2)),
+    ]
+)
+fig_p.add_hline(y=core.P_EB_MAX_W / 1000, line=dict(color=COULEUR_SECONDAIRE, dash="dot", width=1),
+                annotation_text="limite de la batterie Énergie", annotation_position="top left")
+fig_p.update_layout(
+    height=380, margin=dict(t=10, b=10, l=10, r=10), hovermode="x unified", yaxis_title="Puissance (kW)",
+    xaxis=dict(title="Temps (min)", rangeslider=dict(visible=True, thickness=0.08), range=[60, 90]),
+    legend=dict(orientation="h", y=1.12, x=0),
+)
+st.plotly_chart(fig_p, width="stretch")
+
+
+# 2 — États de charge
+
+st.subheader("Évolution des états de charge")
+x_soc = np.arange(len(traj["SOC_EB"])) * core.DT_SECONDS / 60.0
+fig_soc = go.Figure(
+    [
+        go.Scatter(x=x_soc, y=np.asarray(traj["SOC_EB"], float) * 100, name="Batterie Énergie",
+                   line=dict(color=COULEUR_EB, width=2)),
+        go.Scatter(x=x_soc, y=np.asarray(traj["SOC_PB"], float) * 100, name="Batterie Puissance",
+                   line=dict(color=COULEUR_PB, width=2)),
+    ]
+)
+fig_soc.add_hline(y=core.SOC_EB_MIN * 100, line=dict(color=COULEUR_VIOLATION, dash="dot", width=1),
+                  annotation_text="SOC minimal", annotation_position="bottom right")
+fig_soc.add_hline(y=core.SOC_EB_MAX * 100, line=dict(color=COULEUR_REFERENCE, dash="dot", width=1),
+                  annotation_text="SOC maximal", annotation_position="top right")
+fig_soc.update_layout(
+    height=320, margin=dict(t=10, b=40, l=10, r=10), hovermode="x unified",
+    xaxis_title="Temps (min)", yaxis=dict(title="SOC (%)", range=[0, 105]),
+    legend=dict(orientation="h", y=1.12, x=0),
+)
+st.plotly_chart(fig_soc, width="stretch")
+
+
+# 3 — Pertes
+
+st.subheader("Pertes estimées")
 st.caption(
-    "Monotone du courant : les valeurs du courant PB (charge et décharge confondues), "
-    "triées de la plus forte à la plus faible. Plus la courbe est basse, plus la batterie "
-    "est ménagée ; le courant efficace, lié au vieillissement, se joue surtout à gauche."
+    "Pertes cumulées au fil du cycle : effet Joule dans chaque batterie (R·I²) et pertes du "
+    "convertisseur, qui ne traite que la différence de tension entre les batteries. "
+    "Estimation faite après coup : la simulation elle-même est sans pertes."
 )
-
-# Une boîte à moustaches ne convient pas : le courant PB est quasi nul la moitié
-# du temps, les boîtes s'écrasent sur 0 et seules les moustaches restent visibles.
-fig_i = go.Figure()
-part_active = {}
-for n in (ref, cible):
-    i_abs = np.abs(np.asarray(resultats[n]["I_PB"], dtype=float))
-    part_active[n] = float(np.mean(i_abs > 1.0) * 100)
-    tri = np.sort(i_abs)[::-1]
-    part = np.arange(len(tri)) / len(tri) * 100.0
-    pas = max(1, len(tri) // 2000)
-    fig_i.add_trace(
-        go.Scatter(
-            x=part[::pas], y=tri[::pas], mode="lines", name=_libelle(n), line=_trait(n),
-            hovertemplate="≥ %{y:.0f} A pendant %{x:.1f} % du cycle<extra></extra>",
-        )
-    )
-fig_i.update_layout(
-    xaxis=dict(title="Part du cycle (%)", range=[0, min(100.0, max(part_active.values()) * 1.15 + 1)]),
-    yaxis_title="Courant de la PB (A, valeur absolue)",
-    height=360, margin=dict(t=20, b=40, l=50, r=15),
-    legend=dict(orientation="h", y=-0.22, x=0),
+pas = pertes_par_pas(traj)
+h = core.DT_SECONDS / 3600.0
+cumul = {k: np.cumsum(v[:n]) * h for k, v in pas.items()}
+total = cumul["eb"] + cumul["pb"] + cumul["convertisseur"]
+pas_graphe = max(1, n // 2000)
+fig_l = go.Figure(
+    [
+        go.Scatter(x=temps_min[::pas_graphe], y=cumul["eb"][::pas_graphe], name="Batterie Énergie",
+                   line=dict(color=COULEUR_EB, width=1.8)),
+        go.Scatter(x=temps_min[::pas_graphe], y=cumul["pb"][::pas_graphe], name="Batterie Puissance",
+                   line=dict(color=COULEUR_PB, width=1.8)),
+        go.Scatter(x=temps_min[::pas_graphe], y=cumul["convertisseur"][::pas_graphe], name="Convertisseur",
+                   line=dict(color=COULEUR_CONVERTISSEUR, width=1.8)),
+        go.Scatter(x=temps_min[::pas_graphe], y=total[::pas_graphe], name="Pertes totales",
+                   line=dict(color=COULEUR_REFERENCE, width=2.2, dash="dash")),
+    ]
 )
-st.plotly_chart(fig_i, width="stretch")
-st.caption("L'axe horizontal s'arrête là où le courant devient nul pour les deux stratégies.")
-
-rms_c, rms_r = _valeur(cible, "i_pb_rms"), _valeur(ref, "i_pb_rms")
-ecart_rel = (rms_c - rms_r) / rms_r * 100 if rms_r else 0.0
-st.markdown(
-    f"**{nom_affichage(cible)}** sollicite la batterie Puissance pendant "
-    f"**{part_active[cible]:.0f} %** du cycle (contre {part_active[ref]:.0f} % pour "
-    f"{nom_affichage(ref)}), avec un courant efficace de **{rms_c:.1f} A** "
-    f"({ecart_rel:+.0f} %) et un pic à {stats[cible]['i_pb_max']:.0f} A."
+fig_l.update_layout(
+    height=320, margin=dict(t=10, b=40, l=10, r=10), hovermode="x unified",
+    xaxis_title="Temps (min)", yaxis_title="Pertes cumulées (Wh)", legend=dict(orientation="h", y=1.12, x=0),
 )
-
-
-# 5 — Indicateurs bruts, repliés
-
-with st.expander("Indicateurs bruts, toutes stratégies"):
-    tableau = pd.DataFrame(
-        {
-            "Stratégie": [nom_affichage(n) for n in noms],
-            "SOC_EB final (%)": [stats[n]["soc_eb_final"] * 100 for n in noms],
-            "SOC_PB final (%)": [stats[n]["soc_pb_final"] * 100 for n in noms],
-            "Énergie EB (Wh)": [stats[n]["energie_eb_wh"] for n in noms],
-            "Énergie PB (Wh)": [stats[n]["energie_pb_wh"] for n in noms],
-            "I_EB RMS (A)": [stats[n]["i_eb_rms"] for n in noms],
-            "I_PB RMS (A)": [stats[n]["i_pb_rms"] for n in noms],
-            "I_PB max (A)": [stats[n]["i_pb_max"] for n in noms],
-            "Pertes estimées (Wh)": [metriques[n]["pertes_totales_wh"] for n in noms],
-            "Demande non fournie (Wh)": [metriques[n]["energie_non_servie_wh"] for n in noms],
-            "Violations SOC": [metriques[n]["nb_violations"] for n in noms],
-        }
-    ).set_index("Stratégie")
-    st.dataframe(
-        tableau.style.format("{:.1f}").format(
-            {"I_PB max (A)": "{:.0f}", "Pertes estimées (Wh)": "{:.0f}",
-             "Demande non fournie (Wh)": "{:.0f}", "Violations SOC": "{:.0f}"}
-        ),
-        width="stretch",
+st.plotly_chart(fig_l, width="stretch")
+p1, p2, p3, p4 = st.columns(4)
+p1.metric("Batterie Énergie", f"{cumul['eb'][-1]:.0f} Wh")
+p2.metric("Batterie Puissance", f"{cumul['pb'][-1]:.0f} Wh")
+p3.metric("Convertisseur", f"{cumul['convertisseur'][-1]:.0f} Wh")
+p4.metric("Pertes totales", f"{total[-1]:.0f} Wh")
+with st.expander("Hypothèses du calcul des pertes"):
+    st.markdown(
+        f"- Résistances internes calculées à partir des cellules : {core.CELL_EB_RINT_OHM * 1000:.0f} mΩ × "
+        f"{core.CELL_EB_N_SERIE}/{core.CELL_EB_N_PARALLELE} pour l'EB, {core.CELL_PB_RINT_OHM * 1000:.1f} mΩ × "
+        f"{core.CELL_PB_N_SERIE}/{core.CELL_PB_N_PARALLELE} pour la PB.\n"
+        f"- Convertisseur : rendement de {RENDEMENT_CONVERTISSEUR * 100:.1f} % (mesuré à puissance nominale, "
+        "plus faible à charge partielle), appliqué à la seule puissance qu'il traite.\n"
+        "- Tensions constantes, sans variation avec le SOC."
     )
 
 

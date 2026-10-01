@@ -36,6 +36,7 @@ from core.navigation import pied_navigation
 from core.instant import choisir_instant
 from core.style import (
     couleur,
+    flux_html,
     COULEUR_DECISION,
     COULEUR_DEMANDE,
     COULEUR_EB,
@@ -47,7 +48,6 @@ from core import ontology_explainer as ox
 from core import xai
 
 
-# Batterie Énergie = bleu, batterie Puissance = vert, comme sur les autres pages.
 # Palette commune (core/style.py) : une couleur = une signification.
 C_EB, C_PB, C_GRIS = COULEUR_EB, COULEUR_PB, COULEUR_SECONDAIRE
 
@@ -197,9 +197,9 @@ def kw(x):
 
 st.title("💡 Pourquoi cette décision ?")
 st.caption(
-    "Comment une stratégie a-t-elle réparti la puissance entre les deux batteries, et "
-    "que dit l'ontologie OntoHESS de cette décision ? L'explication s'adapte au modèle : "
-    "exacte quand on connaît son calcul, approchée quand le modèle est opaque."
+    "Pour un instant du cycle et une stratégie : quelle décision a été prise, et pourquoi. "
+    "L'explication s'adapte au modèle : exacte quand on connaît son calcul, approchée "
+    "quand le modèle est opaque."
 )
 
 try:
@@ -221,7 +221,7 @@ n = min([len(df)] + [len(traj["P_EB"]) for traj in resultats.values()])
 col_t, col_s = st.columns([2, 1])
 instant, t_sel = choisir_instant(df, n, col_t)
 with col_s:
-    strategie = st.selectbox("Stratégie", noms, format_func=nom_affichage)
+    strategie = st.selectbox("Modèle", noms, format_func=nom_affichage)
 
 traj = resultats[strategie]
 speed = float(df["speed"].iloc[instant]) if "speed" in df.columns else 0.0
@@ -240,35 +240,174 @@ etat = ox.etat_instant(p_dem, soc_eb, soc_pb, p_eb=p_eb)
 onto = ox.repartition_ontologie(p_dem, soc_eb, soc_pb)
 exacte, nature_txt = NATURE.get(strategie, (False, ""))
 
-tab_instant, tab_ns, tab_cycle = st.tabs(["À cet instant", "NS-1 et NS-2 côte à côte", "Sur tout le cycle"])
+# Ingrédients de l'explication, calculés une fois pour toute la page
+res_flou = alpha_fuzzy_calc(np.array([soc_eb]), np.array([soc_pb]), np.array([p_dem]), np.array([accel]))
+alpha_flou = float(res_flou["alpha"][0])
+forces = np.asarray(res_flou["strengths"][0], dtype=float)
+contrib = ox.contributions_floues(forces)
+dominante = str(res_flou["dominant_rule"][0])
+avec_shapley = strategie in xai.SHAPLEY_DISPONIBLE and not demande_nulle
+if avec_shapley:
+    ref_shap, contribs, alpha_explique = _shapley(strategie, instant, _signature(strategie))
+    principales = sorted(contribs, key=lambda kv: -abs(kv[1]))
+entrees_symb = {
+    "EMS_MLP_neurosymbolic": MLP_NS_INPUT_COLS,
+    "EMS_LSTM_neurosymbolic": LSTM_NS_FEATURE_COLS,
+}.get(strategie, [])
+etats_transmis = [c for c in ox.LIBELLES_SYMBOLIQUES if c in entrees_symb]
 
 
-with tab_instant:
+def _lib_regle(cle):
+    return ox.REGLES_FLOUES.get(cle, (cle,))[0]
 
-    # 1 — La situation
 
-    st.subheader("1. La situation")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Temps", f"{t_sel:.0f} s")
-    c2.metric("Vitesse", f"{speed * 3.6:.0f} km/h")
-    c3.metric("Puissance demandée", kw(p_dem))
-    c4.metric("SOC Énergie", f"{soc_eb * 100:.1f} %")
-    c5.metric("SOC Puissance", f"{soc_pb * 100:.1f} %")
+def _entree(col):
+    """Nom lisible d'une entrée de réseau, dans une phrase (les sigles gardent leur casse)."""
+    lib = xai.LIBELLES_ENTREES.get(col, col)
+    return lib if lib[:2].isupper() else lib[0].lower() + lib[1:]
+
+
+# Aucune règle floue ne s'active nettement : le moteur applique sa répartition par défaut.
+regle_par_defaut = dominante not in FUZZY_RULE_NAMES or float(forces.max(initial=0.0)) < 1e-3
+
+
+# La décision, tout en haut
+
+with st.container(border=True):
     st.markdown(
-        f"État de fonctionnement inféré par l'ontologie : **{etat['libelle']}** "
-        f"(`{etat['fonctionnement']}`)."
+        f"**{nom_affichage(strategie)}** · instant t = {t_sel:.0f} s · "
+        f"vitesse {speed * 3.6:.0f} km/h · état inféré : {etat['libelle'][0].lower() + etat['libelle'][1:]}"
     )
+    d = st.columns(6)
+    d[0].metric("Demande", kw(p_dem))
+    d[1].metric("SOC EB", f"{soc_eb * 100:.1f} %")
+    d[2].metric("SOC PB", f"{soc_pb * 100:.1f} %")
+    d[3].metric("alpha (part PB)", f"{alpha_final * 100:.1f} %")
+    d[4].metric("Batterie Énergie", kw(p_eb))
+    d[5].metric("Batterie Puissance", kw(p_pb))
 
-    # 2 — La décision
 
-    st.subheader("2. La décision")
+# Pourquoi cette décision ? 3 à 5 raisons lisibles
+
+def _raisons():
     if demande_nulle:
-        st.info("Demande quasi nulle : aucune batterie n'est sollicitée, il n'y a pas de répartition à expliquer.")
+        return ["La demande est quasi nulle : aucune batterie n'est sollicitée, il n'y a pas de répartition à expliquer."]
+    r = []
+    if p_dem > 0:
+        r.append(
+            f"La demande de traction est de **{kw(p_dem)}**, "
+            + ("au-delà de" if p_dem > P_EB_MAX_W else "dans")
+            + f" la limite de la batterie Énergie ({kw(P_EB_MAX_W)})."
+        )
     else:
-        d1, d2, d3 = st.columns(3)
-        d1.metric("Part confiée à la PB (alpha)", f"{alpha_final * 100:.1f} %")
-        d2.metric("Batterie Énergie", kw(p_eb))
-        d3.metric("Batterie Puissance", kw(p_pb))
+        r.append(
+            f"Le véhicule freine : **{kw(-p_dem)}** sont à récupérer"
+            + (", au-delà de ce que la batterie Énergie peut absorber" if p_dem < P_EB_MIN_W else "")
+            + f" (limite {kw(-P_EB_MIN_W)})."
+        )
+    ecart = (soc_eb - soc_pb) * 100
+    r.append(
+        f"Le SOC de la batterie Énergie ({soc_eb * 100:.0f} %) est "
+        + ("supérieur à" if ecart > 1 else "inférieur à" if ecart < -1 else "proche de")
+        + f" celui de la batterie Puissance ({soc_pb * 100:.0f} %)."
+    )
+    if strategie == "EMS_MLP_neurosymbolic":
+        r.append(
+            (
+                "Aucune règle floue ne s'active nettement : la base floue propose sa répartition par défaut, "
+                if regle_par_defaut
+                else f"La base floue, menée par la règle **{_lib_regle(dominante)}**, propose "
+            )
+            + f"**{alpha_flou * 100:.1f} %** pour la PB."
+        )
+        r.append(
+            f"Le réseau applique une correction limitée de **{(alpha_req - alpha_flou) * 100:+.1f} points** "
+            f"(borne ±{MLP_NS_MAX_DELTA * 100:.0f})."
+        )
+    elif strategie == "EMS_LSTM_neurosymbolic":
+        actifs = [ox.LIBELLES_SYMBOLIQUES[c].lower() for c in etats_transmis if etat["symboliques"].get(c)]
+        total = sum(abs(v) for _, v in contribs) or 1.0
+        part = sum(abs(v) for c, v in contribs if c in xai.ETATS_SYMBOLIQUES) / total * 100
+        r.append(
+            f"États symboliques transmis au réseau : {', '.join(actifs) or 'aucun actif'} ; "
+            f"ils pèsent {part:.0f} % de la décision."
+        )
+        top = next(((c, v) for c, v in principales if c not in xai.ETATS_SYMBOLIQUES), ("—", 0.0))
+        r.append(
+            f"Le LSTM, qui lit les {LSTM_WINDOW} dernières secondes, s'appuie surtout sur "
+            f"**{_entree(top[0])}** ({top[1] * 100:+.1f} points)."
+        )
+    else:
+        r.append(f"L'ontologie infère l'état « {etat['libelle']} ».")
+        if strategie == "EMS_power_limitation" and onto is not None:
+            r.append(f"La règle **{onto['regle']['id']}** d'OntoHESS s'applique : {onto['regle']['lecture']}.")
+        elif strategie == "EMS_fuzzy_logic" and regle_par_defaut:
+            r.append(
+                "Aucune règle floue ne s'active nettement : le moteur applique sa répartition par "
+                f"défaut ({alpha_flou * 100:.0f} % pour la PB)."
+            )
+        elif strategie == "EMS_fuzzy_logic":
+            i_dom = list(FUZZY_RULE_NAMES).index(dominante)
+            r.append(
+                f"La règle floue dominante est **{_lib_regle(dominante)}** "
+                f"({forces[i_dom] * 100:.0f} % d'activation) : {RULE_LABELS_FR.get(dominante, '')}."
+            )
+        elif avec_shapley:
+            fortes = [(_entree(c), v) for c, v in principales[:2] if abs(v) >= 5e-4]
+            r.append(
+                "Le réseau s'appuie surtout sur "
+                + " et ".join(f"**{lib}** ({v * 100:+.1f} points)" for lib, v in fortes)
+                + "."
+            )
+    r.append(
+        "Le filtre de sécurité a **corrigé** la proposition pour respecter les limites physiques."
+        if correction
+        else "Le filtre de sécurité a **validé** la décision : les limites physiques sont respectées."
+    )
+    return r[:5]
+
+
+st.subheader("Pourquoi cette décision ?")
+st.markdown("\n".join(f"{i}. {r}" for i, r in enumerate(_raisons(), start=1)))
+st.caption(f"Explication {'exacte' if exacte else 'approchée (après coup)'} : {nature_txt}")
+
+
+onglet_dec, onglet_rai, onglet_sym, onglet_res, onglet_etsi, onglet_cycle = st.tabs(
+    ["Décision", "Raisons", "Symbolique", "Réseau neuronal", "Et si… ?", "Sur tout le cycle"]
+)
+
+
+# Onglet « Décision » : la décision décomposée, et les autres stratégies au même instant
+
+with onglet_dec:
+    if demande_nulle:
+        st.info("Demande quasi nulle : pas de répartition à décomposer.")
+    else:
+        if strategie in ("EMS_fuzzy_logic", "EMS_MLP_neurosymbolic"):
+            etapes = (
+                [(_lib_regle(FUZZY_RULE_NAMES[i]), float(contrib[i])) for i in np.argsort(contrib)[::-1] if contrib[i] > 5e-4]
+                if contrib is not None else [("Répartition par défaut", alpha_flou)]
+            )
+            if strategie == "EMS_MLP_neurosymbolic":
+                etapes += [("Correction du réseau", alpha_req - alpha_flou)]
+            elif abs(alpha_req - alpha_flou) > 1e-4:
+                etapes += [("Ajustement du moteur", alpha_req - alpha_flou)]
+        elif strategie == "EMS_power_limitation":
+            etapes = [("Règle physique", alpha_req)]
+        else:
+            reste = sum(v for _, v in principales[6:])
+            etapes = (
+                [("Référence (situation moyenne)", ref_shap)]
+                + [(xai.LIBELLES_ENTREES.get(c, c), v) for c, v in principales[:6] if abs(v) >= 5e-4]
+                + ([("Autres entrées", reste)] if abs(reste) >= 5e-4 else [])
+                + ([("Écart de reconstitution", alpha_req - alpha_explique)] if abs(alpha_req - alpha_explique) > 1e-3 else [])
+            )
+        etapes += [("Filtre de sécurité", alpha_final - alpha_req)]
+        st.plotly_chart(_cascade(etapes, alpha_final), width="stretch")
+        st.caption(
+            "Part confiée à la PB, étape par étape : orange = pousse vers la batterie Puissance, "
+            "vert = vers la batterie Énergie, violet = décision appliquée."
+        )
         if correction:
             st.warning(
                 f"Le filtre de sécurité a corrigé la répartition proposée ({alpha_req * 100:.1f} %) "
@@ -277,240 +416,23 @@ with tab_instant:
         elif abs(alpha_final - alpha_req) > 1e-9:
             _pas = st.session_state.get("pas_alpha") or ALPHA_GRID_STEP
             st.caption(
-                f"Proposé {alpha_req * 100:.1f} %, appliqué {alpha_final * 100:.1f} % : le filtre "
-                f"choisit alpha sur une grille de pas {_pas:g} ; un écart inférieur à "
-                f"{_pas * 110:.2f} points est un arrondi à cette grille, pas une correction."
-            )
-        else:
-            st.caption("Décision acceptée telle quelle par le filtre de sécurité.")
-
-    # 3 — Comment la décision a été construite
-
-    st.subheader("3. Comment la décision a été construite")
-    with st.container(border=True):
-        st.markdown(
-            f"**Explication {'exacte' if exacte else 'approchée (après coup)'}** — {nature_txt}"
-        )
-
-    if not demande_nulle:
-        res_flou = alpha_fuzzy_calc(np.array([soc_eb]), np.array([soc_pb]), np.array([p_dem]), np.array([accel]))
-        alpha_flou = float(res_flou["alpha"][0])
-        forces = np.asarray(res_flou["strengths"][0], dtype=float)
-        contrib = ox.contributions_floues(forces)
-        # Une barre par règle floue : alpha flou = somme exacte des contributions.
-        etapes_floues = (
-            [
-                (ox.REGLES_FLOUES.get(FUZZY_RULE_NAMES[i], (FUZZY_RULE_NAMES[i],))[0], float(contrib[i]))
-                for i in np.argsort(contrib)[::-1]
-                if contrib[i] > 5e-4
-            ]
-            if contrib is not None
-            else [("Répartition par défaut", alpha_flou)]
-        )
-
-        if strategie == "EMS_MLP_neurosymbolic":
-            etapes = etapes_floues + [
-                ("Correction du réseau", alpha_req - alpha_flou),
-                ("Filtre de sécurité", alpha_final - alpha_req),
-            ]
-        elif strategie == "EMS_fuzzy_logic":
-            etapes = etapes_floues
-            if abs(alpha_req - alpha_flou) > 1e-4:
-                etapes = etapes + [("Ajustement du moteur", alpha_req - alpha_flou)]
-            etapes = etapes + [("Filtre de sécurité", alpha_final - alpha_req)]
-        elif strategie == "EMS_power_limitation":
-            etapes = [("Règle physique", alpha_req), ("Filtre de sécurité", alpha_final - alpha_req)]
-        else:
-            # Réseau opaque : valeurs de Shapley exactes, par rapport à une situation
-            # moyenne du cycle. Référence + contributions = décision du réseau.
-            ref_shap, contribs, alpha_explique = _shapley(strategie, instant, _signature(strategie))
-            principales = sorted(contribs, key=lambda kv: -abs(kv[1]))
-            reste = sum(v for _, v in principales[6:])
-            etapes = (
-                [("Référence (situation moyenne)", ref_shap)]
-                + [(xai.LIBELLES_ENTREES.get(c, c), v) for c, v in principales[:6] if abs(v) >= 5e-4]
-                + ([("Autres entrées", reste)] if abs(reste) >= 5e-4 else [])
-                + ([("Écart de reconstitution", alpha_req - alpha_explique)] if abs(alpha_req - alpha_explique) > 1e-3 else [])
-                + [("Filtre de sécurité", alpha_final - alpha_req)]
-            )
-        # En bref : la décision racontée en langage courant.
-        dominante = str(res_flou["dominant_rule"][0])
-        if strategie == "EMS_power_limitation" and onto is not None:
-            recit = (
-                f"La demande ({kw(p_dem)}) "
-                f"{'dépasse' if p_dem > P_EB_MAX_W else 'reste dans'} la limite de la batterie "
-                f"Énergie ({kw(P_EB_MAX_W)}) : {onto['regle']['lecture']} (règle "
-                f"**{onto['regle']['id']}** d'OntoHESS, que cette stratégie applique exactement)."
-            )
-        elif strategie in ("EMS_fuzzy_logic", "EMS_MLP_neurosymbolic"):
-            n_actives = int(np.sum(forces > 5e-4))
-            recit = (
-                f"La règle dominante est **{ox.REGLES_FLOUES.get(dominante, (dominante,))[0]}** : "
-                f"{RULE_LABELS_FR.get(dominante, '')}. Avec {n_actives} règle(s) active(s), la "
-                f"moyenne de leurs conclusions, pondérée par leur activation, donne "
-                f"{alpha_flou * 100:.1f} % pour la PB."
-            )
-            if strategie == "EMS_MLP_neurosymbolic":
-                delta = alpha_req - alpha_flou
-                recit += (
-                    f" Le réseau corrige cette base de **{delta * 100:+.1f} points** "
-                    f"({abs(delta) / MLP_NS_MAX_DELTA * 100:.0f} % de sa marge de "
-                    f"±{MLP_NS_MAX_DELTA * 100:.0f} points)."
-                )
-        else:
-            fortes = [(xai.LIBELLES_ENTREES.get(c, c), v) for c, v in principales[:2] if abs(v) >= 5e-4]
-            recit = (
-                f"Dans une situation moyenne du cycle, le réseau confierait {ref_shap * 100:.1f} % "
-                "à la PB ; ici, "
-                + " et ".join(
-                    f"**{lib}** {'augmente' if v > 0 else 'réduit'} cette part de {abs(v) * 100:.1f} points"
-                    for lib, v in fortes
-                )
-                + f", d'où {alpha_req * 100:.1f} % proposés."
-            )
-        recit += (
-            f" Le filtre de sécurité {'a corrigé cette proposition' if correction else 'l’a acceptée'} : "
-            f"la batterie Énergie fournit {kw(p_eb)} et la batterie Puissance {kw(p_pb)}."
-        )
-        st.info(f"**En bref** — {recit}")
-
-        st.plotly_chart(_cascade(etapes, alpha_final), width="stretch")
-        st.caption(
-            "Cascade de la part confiée à la PB : orange = pousse vers la batterie Puissance, "
-            "vert = vers la batterie Énergie, violet = décision appliquée."
-        )
-
-        # Détail propre à chaque famille de modèle
-        if strategie in ("EMS_fuzzy_logic", "EMS_MLP_neurosymbolic"):
-            regles_f = {r["cle"]: r for r in ox.regles_floues()}
-            actives = [i for i in np.argsort(forces)[::-1] if forces[i] > 5e-4]
-            if actives:
-                st.dataframe(
-                    [
-                        {
-                            "Règle": regles_f[FUZZY_RULE_NAMES[i]]["libelle"],
-                            "Si": regles_f[FUZZY_RULE_NAMES[i]]["si"],
-                            "Activation": f"{forces[i] * 100:.0f} %",
-                            "Conclusion (part de la PB)": f"{regles_f[FUZZY_RULE_NAMES[i]]['alpha'] * 100:.0f} %",
-                            "Contribution": f"{contrib[i] * 100:.1f} pts" if contrib is not None else "—",
-                        }
-                        for i in actives
-                    ],
-                    hide_index=True,
-                    width="stretch",
-                )
-            concepts = ox.REGLES_FLOUES.get(dominante, ("", []))[1]
-            st.caption(
-                (
-                    f"Concepts de l'ontologie mobilisés par la règle dominante : "
-                    + ", ".join(f"{lib} (`{cl}`)" for lib, cl in concepts) + ". "
-                    if concepts else ""
-                )
-                + "Le moteur flou calcule alpha comme la moyenne des conclusions des règles, "
-                "pondérée par leur activation : chaque contribution est exacte."
+                f"Proposé {alpha_req * 100:.1f} %, appliqué {alpha_final * 100:.1f} % : le filtre choisit "
+                f"alpha sur une grille de pas {_pas:g} ; un écart inférieur à {_pas * 110:.2f} points est "
+                "un arrondi à cette grille, pas une correction."
             )
 
-        elif strategie in xai.SHAPLEY_DISPONIBLE:
-            if strategie == "EMS_LSTM_neurosymbolic":
-                total = sum(abs(v) for _, v in contribs)
-                symb = sum(abs(v) for c, v in contribs if c in xai.ETATS_SYMBOLIQUES)
-                st.markdown(
-                    f"Les quatre états symboliques de l'ontologie pèsent **{symb / total * 100:.0f} %** "
-                    "de l'explication à cet instant." if total > 0 else ""
-                )
-            if strategie in ("EMS_LSTM", "EMS_LSTM_neurosymbolic"):
-                st.caption(
-                    f"Chaque entrée compte pour tout son historique sur les {LSTM_WINDOW} dernières "
-                    "secondes vues par le réseau."
-                )
-            st.caption(
-                "Valeurs de Shapley exactes : le réseau est évalué sur toutes les combinaisons "
-                "d'entrées, une entrée absente prenant sa valeur moyenne sur le cycle (état "
-                "inactif pour un état symbolique). La référence plus les contributions redonnent "
-                "exactement la décision du réseau."
-            )
-            if strategie == "EMS_GNN":
-                with st.expander("Lecture par composant du graphe (gradient × entrée)"):
-                    pct_g, edge = _attribution_gnn(p_dem, soc_eb, soc_pb, accel)
-                    st.plotly_chart(_graphe_gnn(pct_g, edge), width="stretch")
-                    st.caption("Estimation locale approchée : importance de chaque nœud du graphe du HESS.")
-
-    # 4 — Ce qu'en dit l'ontologie
-
-    st.subheader("4. Ce qu'en dit l'ontologie")
-    activees, non_activees, _ = ox.evaluer_regles(p_dem, soc_eb, soc_pb)
-    lues = [r for r in activees if r["type"] in ("mode", "repartition")]
-    if lues:
-        st.markdown("Règles SWRL d'OntoHESS vérifiées à cet instant :")
-        for r in sorted(lues, key=lambda r: r["type"]):
-            premisses = " et ".join(f"`{d['texte']}`" for d in r["details"])
-            st.markdown(f"- **{r['id']}** — si {premisses}, alors {r['lecture']}.")
-    else:
-        st.markdown("Aucune règle de mode ou de répartition ne s'applique (demande quasi nulle).")
-
-    if onto is not None and not demande_nulle:
-        ecart = (alpha_final - onto["alpha"]) * 100
-        if abs(ecart) < 0.5:
-            verdict = "la décision de la stratégie est **identique** à cette règle de référence"
-        elif ecart > 0:
-            verdict = f"la stratégie confie **{ecart:.1f} points de plus** à la PB que cette règle"
-        else:
-            verdict = f"la stratégie confie **{-ecart:.1f} points de moins** à la PB que cette règle"
-        st.markdown(
-            f"La règle de répartition {onto['regle']['id']} prescrit **{onto['alpha'] * 100:.1f} %** "
-            f"pour la PB ; {verdict}."
-        )
-        st.caption(
-            "Ces règles décrivent la conduite de référence (priorité à l'EB, dans ses limites). "
-            "S'en écarter n'est pas une erreur : c'est ce que font les stratégies qui cherchent mieux."
-        )
-
-    entrees = {
-        "EMS_MLP_neurosymbolic": MLP_NS_INPUT_COLS,
-        "EMS_LSTM_neurosymbolic": LSTM_NS_FEATURE_COLS,
-    }.get(strategie)
-    if entrees:
-        etats_modele = [c for c in ox.LIBELLES_SYMBOLIQUES if c in entrees]
-        st.markdown(
-            "États symboliques transmis au réseau : "
-            + ", ".join(
-                f"{ox.LIBELLES_SYMBOLIQUES[c]} **{'oui' if etat['symboliques'][c] else 'non'}**"
-                for c in etats_modele
-            )
-            + "."
-        )
-
-    with st.expander("Et si… ? (d'après les seuils de l'ontologie)"):
-        for phrase in ox.contrefactuels(p_dem, soc_eb, soc_pb):
-            st.markdown(f"- {phrase}")
-        echecs = [
-            f"**{r['id']}** ({r['lecture']}) : " + " ; ".join(f"`{d['texte']}` non vérifié" for d in r["details"] if d["ok"] is False)
-            for r in non_activees if r["type"] in ("mode", "repartition")
-        ]
-        if echecs:
-            st.markdown("Règles non activées, et pourquoi :")
-            for e in echecs:
-                st.markdown(f"- {e}")
-    st.caption("La structure de l'ontologie et toutes ses règles sont présentées dans « Base de connaissances ».")
-
-    # 5 — Les autres stratégies au même instant
-
-    if not demande_nulle:
-        st.subheader("5. Les autres stratégies au même instant")
+        st.markdown("**Les autres stratégies au même instant**")
         alphas = {nm: float(resultats[nm]["alpha_final"][instant]) * 100 for nm in noms}
         ordre_s = sorted(noms, key=lambda nm: alphas[nm], reverse=True)
         fig_a = go.Figure(
             go.Bar(
-                y=[nom_affichage(nm) for nm in ordre_s][::-1],
-                x=[alphas[nm] for nm in ordre_s][::-1],
+                y=[nom_affichage(nm) for nm in ordre_s][::-1], x=[alphas[nm] for nm in ordre_s][::-1],
                 orientation="h",
                 marker=dict(
                     color=[couleur(nm) for nm in ordre_s][::-1],
                     opacity=[1.0 if nm == strategie else 0.4 for nm in ordre_s][::-1],
                 ),
-                text=[f"{alphas[nm]:.1f} %" for nm in ordre_s][::-1],
-                textposition="outside",
-                hoverinfo="skip",
+                text=[f"{alphas[nm]:.1f} %" for nm in ordre_s][::-1], textposition="outside", hoverinfo="skip",
             )
         )
         if onto is not None:
@@ -544,136 +466,280 @@ with tab_instant:
         st.plotly_chart(fig_ctx, width="stretch")
 
 
-# NS-1 et NS-2 côte à côte : même instant, deux façons d'intégrer le symbolique
+# Onglet « Raisons » : les éléments qui ont contribué à la décision
+
+with onglet_rai:
+    if demande_nulle:
+        st.info("Demande quasi nulle : pas de décision à expliquer.")
+    elif strategie == "EMS_power_limitation":
+        if onto is not None:
+            premisses = " et ".join(f"`{d['texte']}`" for d in onto["regle"]["details"])
+            st.markdown(f"La décision découle d'une seule règle : **{onto['regle']['id']}** — si {premisses}, alors {onto['regle']['lecture']}.")
+        st.caption("Le modèle physique ne dépend que de la puissance demandée et du SOC de la batterie Énergie.")
+    elif strategie in ("EMS_fuzzy_logic", "EMS_MLP_neurosymbolic"):
+        regles_f = {r["cle"]: r for r in ox.regles_floues()}
+        actives = [i for i in np.argsort(forces)[::-1] if forces[i] > 5e-4]
+        if actives:
+            st.dataframe(
+                [
+                    {
+                        "Règle": regles_f[FUZZY_RULE_NAMES[i]]["libelle"],
+                        "Si": regles_f[FUZZY_RULE_NAMES[i]]["si"],
+                        "Activation": f"{forces[i] * 100:.0f} %",
+                        "Conclusion (part de la PB)": f"{regles_f[FUZZY_RULE_NAMES[i]]['alpha'] * 100:.0f} %",
+                        "Contribution": f"{contrib[i] * 100:.1f} pts" if contrib is not None else "—",
+                    }
+                    for i in actives
+                ],
+                hide_index=True, width="stretch",
+            )
+        st.caption(
+            "Le moteur flou calcule alpha comme la moyenne des conclusions des règles, pondérée "
+            "par leur activation : chaque contribution est exacte."
+        )
+    else:
+        valeurs = [(xai.LIBELLES_ENTREES.get(c, c), v * 100) for c, v in principales]
+        st.plotly_chart(
+            _barres_h(
+                [lib for lib, _ in valeurs], [v for _, v in valeurs],
+                [C_PB if v >= 0 else C_EB for _, v in valeurs],
+                "Contribution à la part de la PB (points)", "%{y} : %{x:+.1f} points<extra></extra>",
+            ),
+            width="stretch",
+        )
+        st.caption(
+            f"Par rapport à une situation moyenne du cycle, où le réseau confierait {ref_shap * 100:.1f} % "
+            "à la PB : orange = pousse vers la batterie Puissance, vert = vers la batterie Énergie."
+        )
+
+
+# Onglet « Symbolique » : l'ontologie et la place du symbolique dans le modèle
 
 def _coche(ok, texte):
     return f"{'✓' if ok else '✗'} {texte}"
 
 
-with tab_ns:
-    paire = [c for c in ("EMS_MLP_neurosymbolic", "EMS_LSTM_neurosymbolic") if c in resultats]
-    if len(paire) < 2:
-        st.info("Les deux modèles neuro-symboliques ne figurent pas dans ces résultats.")
-    elif demande_nulle:
-        st.info("Demande quasi nulle à cet instant : choisissez un instant de traction ou de freinage.")
-    else:
-        st.caption(
-            "Même instant, deux façons d'intégrer le symbolique : NS-1 part des règles floues et "
-            "n'apprend qu'une correction bornée ; NS-2 est un LSTM qui reçoit des états "
-            "symboliques en entrée. Chaque modèle est évalué sur ses propres états de charge."
-        )
-        colonnes_ns = st.columns(2)
-        decisions = {}
-        for col, cle in zip(colonnes_ns, paire):
-            tr = resultats[cle]
-            se, sp = float(tr["SOC_EB"][instant]), float(tr["SOC_PB"][instant])
-            a_req_ns = float(tr["alpha_requested"][instant])
-            a_fin_ns = float(tr["alpha_final"][instant])
-            pe, pp = float(tr["P_EB"][instant]), float(tr["P_PB"][instant])
-            corr_ns = bool(tr["correction_applied"][instant])
-            decisions[cle] = a_fin_ns
-            symb = ox.etat_instant(p_dem, se, sp, p_eb=pe)["symboliques"]
-            entrees_ns = MLP_NS_INPUT_COLS if cle == "EMS_MLP_neurosymbolic" else LSTM_NS_FEATURE_COLS
-            actifs = [ox.LIBELLES_SYMBOLIQUES[k] for k in ox.LIBELLES_SYMBOLIQUES if k in entrees_ns and symb.get(k)]
-
-            with col:
-                with st.container(border=True):
-                    st.markdown(f"#### {nom_affichage(cle)}")
-                    st.markdown("**Entrées**")
-                    st.markdown(
-                        f"Demande {kw(p_dem)} · SOC EB {se * 100:.1f} % · SOC PB {sp * 100:.1f} %  \n"
-                        f"États symboliques actifs : {', '.join(actifs) or 'aucun'}"
-                    )
-
-                    if cle == "EMS_MLP_neurosymbolic":
-                        rf = alpha_fuzzy_calc(np.array([se]), np.array([sp]), np.array([p_dem]), np.array([accel]))
-                        f_ns = np.asarray(rf["strengths"][0], dtype=float)
-                        c_ns = ox.contributions_floues(f_ns)
-                        a_f = float(rf["alpha"][0])
-                        dom = str(rf["dominant_rule"][0])
-                        st.markdown("**Partie symbolique : règles floues**")
-                        st.markdown(
-                            "\n".join(
-                                f"- {ox.REGLES_FLOUES.get(FUZZY_RULE_NAMES[i], (FUZZY_RULE_NAMES[i],))[0]} : "
-                                f"activation {f_ns[i] * 100:.0f} %, contribution {c_ns[i] * 100:+.1f} pts"
-                                for i in np.argsort(f_ns)[::-1] if f_ns[i] > 5e-4
-                            ) if c_ns is not None else "- aucune règle activée : répartition par défaut"
-                        )
-                        st.markdown(f"→ base floue : **{a_f * 100:.1f} %** pour la PB")
-                        delta_ns = a_req_ns - a_f
-                        st.markdown("**Partie neuronale : correction bornée**")
-                        st.markdown(
-                            f"{delta_ns * 100:+.1f} points ({abs(delta_ns) / MLP_NS_MAX_DELTA * 100:.0f} % "
-                            f"de la marge de ±{MLP_NS_MAX_DELTA * 100:.0f} points)"
-                        )
-                        justification = (
-                            f"Les règles floues, menées par {ox.REGLES_FLOUES.get(dom, (dom,))[0]}, "
-                            f"proposent {a_f * 100:.1f} % pour la PB ; le réseau corrige de "
-                            f"{delta_ns * 100:+.1f} points."
-                        )
-                    else:
-                        ref_ns, contribs_ns, _ = _shapley(cle, instant, _signature(cle))
-                        total = sum(abs(v) for _, v in contribs_ns) or 1.0
-                        symb_c = [(c, v) for c, v in contribs_ns if c in xai.ETATS_SYMBOLIQUES]
-                        neur_c = sorted(
-                            [(c, v) for c, v in contribs_ns if c not in xai.ETATS_SYMBOLIQUES],
-                            key=lambda kv: -abs(kv[1]),
-                        )
-                        part_symb = sum(abs(v) for _, v in symb_c) / total * 100
-                        st.markdown("**Partie symbolique : états en entrée**")
-                        st.markdown(
-                            f"Poids dans la décision : **{part_symb:.0f} %**"
-                            + "".join(
-                                f"  \n- {xai.LIBELLES_ENTREES.get(c, c)} : {v * 100:+.1f} pts"
-                                for c, v in symb_c if abs(v) >= 5e-4
-                            )
-                        )
-                        st.markdown("**Partie neuronale : historique des grandeurs physiques**")
-                        st.markdown(
-                            "\n".join(
-                                f"- {xai.LIBELLES_ENTREES.get(c, c)} : {v * 100:+.1f} pts"
-                                for c, v in neur_c[:3]
-                            )
-                        )
-                        top = neur_c[0] if neur_c else ("—", 0.0)
-                        justification = (
-                            f"Par rapport à une situation moyenne ({ref_ns * 100:.1f} % pour la PB), "
-                            f"{xai.LIBELLES_ENTREES.get(top[0], top[0])} pèse le plus "
-                            f"({top[1] * 100:+.1f} points) ; les états symboliques comptent pour "
-                            f"{part_symb:.0f} % de la décision."
-                        )
-
-                    st.markdown("**Décision**")
-                    st.markdown(
-                        f"Part de la PB : **{a_fin_ns * 100:.1f} %** (proposé {a_req_ns * 100:.1f} %) · "
-                        f"EB {kw(pe)} · PB {kw(pp)}"
-                    )
-                    st.markdown("**Vérification physique**")
-                    st.markdown(
-                        "  \n".join(
-                            [
-                                _coche(not corr_ns, "décision acceptée par le filtre" if not corr_ns else "décision corrigée par le filtre"),
-                                _coche(se >= SOC_EB_MIN and sp >= SOC_PB_MIN, "SOC des deux batteries dans leurs limites"),
-                                _coche(P_EB_MIN_W - 1 <= pe <= P_EB_MAX_W + 1, "batterie Énergie dans ses limites de puissance"),
-                                _coche(float(tr["P_unserved"][instant]) < 1.0, "demande entièrement fournie"),
-                            ]
-                        )
-                    )
-                    st.info(f"**Justification** — {justification}")
-
-        a1, a2 = decisions[paire[0]], decisions[paire[1]]
+with onglet_sym:
+    if strategie == "EMS_MLP_neurosymbolic" and not demande_nulle:
+        st.markdown("**NS-MLP : les règles décident, le réseau corrige**")
         st.markdown(
-            f"À cet instant, **{nom_affichage(paire[0])}** confie {a1 * 100:.1f} % à la PB et "
-            f"**{nom_affichage(paire[1])}** {a2 * 100:.1f} % : écart de {abs(a1 - a2) * 100:.1f} points."
+            flux_html(
+                [
+                    ("Base floue (règles)", COULEUR_REFERENCE),
+                    (f"alpha symbolique {alpha_flou * 100:.1f} %", COULEUR_DECISION),
+                    (f"correction MLP {(alpha_req - alpha_flou) * 100:+.1f} pts", COULEUR_SECONDAIRE),
+                    (f"alpha final {alpha_final * 100:.1f} %", COULEUR_DECISION),
+                ]
+            ),
+            unsafe_allow_html=True,
+        )
+    elif strategie == "EMS_LSTM_neurosymbolic" and not demande_nulle:
+        actifs = [ox.LIBELLES_SYMBOLIQUES[c] for c in etats_transmis if etat["symboliques"].get(c)]
+        st.markdown("**NS-LSTM : le symbolique informe le réseau**")
+        st.markdown(
+            flux_html(
+                [
+                    (f"Historique ({LSTM_WINDOW} s)", COULEUR_REFERENCE),
+                    (f"+ états symboliques : {', '.join(actifs) or 'aucun actif'}", COULEUR_REFERENCE),
+                    ("LSTM", COULEUR_SECONDAIRE),
+                    (f"alpha {alpha_final * 100:.1f} %", COULEUR_DECISION),
+                ]
+            ),
+            unsafe_allow_html=True,
+        )
+
+    if etats_transmis:
+        st.markdown(
+            "États symboliques transmis au réseau : "
+            + ", ".join(
+                f"{ox.LIBELLES_SYMBOLIQUES[c]} **{'oui' if etat['symboliques'][c] else 'non'}**" for c in etats_transmis
+            )
+            + "."
+        )
+    elif strategie == "EMS_fuzzy_logic":
+        concepts = ox.REGLES_FLOUES.get(dominante, ("", []))[1]
+        if concepts and not regle_par_defaut:
+            st.markdown(
+                "Concepts de l'ontologie mobilisés par la règle dominante : "
+                + ", ".join(f"{lib} (`{cl}`)" for lib, cl in concepts) + "."
+            )
+
+    st.markdown("**Ce qu'en dit l'ontologie OntoHESS**")
+    st.markdown(f"État de fonctionnement inféré : **{etat['libelle']}** (`{etat['fonctionnement']}`).")
+    activees, non_activees, _ = ox.evaluer_regles(p_dem, soc_eb, soc_pb)
+    lues = [r for r in activees if r["type"] in ("mode", "repartition")]
+    for r in sorted(lues, key=lambda r: r["type"]):
+        premisses = " et ".join(f"`{d['texte']}`" for d in r["details"])
+        st.markdown(f"- **{r['id']}** — si {premisses}, alors {r['lecture']}.")
+    if onto is not None and not demande_nulle:
+        ecart = (alpha_final - onto["alpha"]) * 100
+        verdict = (
+            "identique à" if abs(ecart) < 0.5
+            else f"{ecart:.1f} points au-dessus de" if ecart > 0
+            else f"{-ecart:.1f} points en dessous de"
+        )
+        st.markdown(
+            f"La règle de répartition {onto['regle']['id']} prescrit **{onto['alpha'] * 100:.1f} %** pour la "
+            f"PB ; la décision de la stratégie est {verdict} cette référence."
         )
         st.caption(
-            "Leurs décisions peuvent différer parce qu'ils ne partent pas de la même information : "
-            f"NS-1 suit ses règles puis les corrige à l'instant présent ; NS-2 raisonne sur les "
-            f"{LSTM_WINDOW} dernières secondes, où le symbolique n'est qu'une entrée parmi d'autres."
+            "Ces règles décrivent la conduite de référence (priorité à l'EB, dans ses limites) ; "
+            "s'en écarter n'est pas une erreur. Toutes les règles sont dans « Base de connaissances »."
         )
 
+    paire = [c for c in ("EMS_MLP_neurosymbolic", "EMS_LSTM_neurosymbolic") if c in resultats]
+    if len(paire) == 2 and not demande_nulle:
+        with st.expander("Comparer NS-MLP et NS-LSTM au même instant"):
+            colonnes_ns = st.columns(2)
+            decisions = {}
+            for col, cle in zip(colonnes_ns, paire):
+                tr = resultats[cle]
+                se, sp = float(tr["SOC_EB"][instant]), float(tr["SOC_PB"][instant])
+                a_req_ns, a_fin_ns = float(tr["alpha_requested"][instant]), float(tr["alpha_final"][instant])
+                pe, pp = float(tr["P_EB"][instant]), float(tr["P_PB"][instant])
+                corr_ns = bool(tr["correction_applied"][instant])
+                decisions[cle] = a_fin_ns
+                with col:
+                    with st.container(border=True):
+                        st.markdown(f"#### {nom_affichage(cle)}")
+                        if cle == "EMS_MLP_neurosymbolic":
+                            rf = alpha_fuzzy_calc(np.array([se]), np.array([sp]), np.array([p_dem]), np.array([accel]))
+                            a_f = float(rf["alpha"][0])
+                            dom = str(rf["dominant_rule"][0])
+                            st.markdown(
+                                f"Règles floues (menées par {_lib_regle(dom)}) : **{a_f * 100:.1f} %**  \n"
+                                f"Correction du réseau : **{(a_req_ns - a_f) * 100:+.1f} points**"
+                            )
+                        else:
+                            ref_ns, contribs_ns, _ = _shapley(cle, instant, _signature(cle))
+                            total = sum(abs(v) for _, v in contribs_ns) or 1.0
+                            part = sum(abs(v) for c, v in contribs_ns if c in xai.ETATS_SYMBOLIQUES) / total * 100
+                            top = max(
+                                ((c, v) for c, v in contribs_ns if c not in xai.ETATS_SYMBOLIQUES),
+                                key=lambda kv: abs(kv[1]), default=("—", 0.0),
+                            )
+                            st.markdown(
+                                f"États symboliques : **{part:.0f} %** de la décision  \n"
+                                f"Entrée la plus influente : {xai.LIBELLES_ENTREES.get(top[0], top[0])} "
+                                f"({top[1] * 100:+.1f} points)"
+                            )
+                        st.markdown(f"Décision : **{a_fin_ns * 100:.1f} %** pour la PB · EB {kw(pe)} · PB {kw(pp)}")
+                        st.markdown(
+                            "  \n".join(
+                                [
+                                    _coche(not corr_ns, "acceptée par le filtre" if not corr_ns else "corrigée par le filtre"),
+                                    _coche(se >= SOC_EB_MIN and sp >= SOC_PB_MIN, "SOC dans leurs limites"),
+                                    _coche(P_EB_MIN_W - 1 <= pe <= P_EB_MAX_W + 1, "EB dans ses limites de puissance"),
+                                    _coche(float(tr["P_unserved"][instant]) < 1.0, "demande entièrement fournie"),
+                                ]
+                            )
+                        )
+            a1, a2 = decisions[paire[0]], decisions[paire[1]]
+            st.caption(
+                f"Écart de {abs(a1 - a2) * 100:.1f} points entre les deux décisions : NS-MLP suit ses "
+                f"règles puis les corrige à l'instant présent ; NS-LSTM raisonne sur les {LSTM_WINDOW} "
+                "dernières secondes, où le symbolique n'est qu'une entrée parmi d'autres."
+            )
 
-# Sur tout le cycle : indicateurs d'explicabilité
+
+# Onglet « Réseau neuronal » : la part apprise de la décision
+
+with onglet_res:
+    if strategie in ("EMS_power_limitation", "EMS_fuzzy_logic"):
+        st.info("Ce modèle n'a pas de réseau neuronal : sa décision est entièrement lisible (onglets Raisons et Symbolique).")
+    elif demande_nulle:
+        st.info("Demande quasi nulle : pas de décision à expliquer.")
+    elif strategie == "EMS_MLP_neurosymbolic":
+        delta = alpha_req - alpha_flou
+        r1, r2 = st.columns(2)
+        r1.metric("Correction du réseau", f"{delta * 100:+.1f} pts")
+        r2.metric("Part de la marge utilisée", f"{abs(delta) / MLP_NS_MAX_DELTA * 100:.0f} %")
+        st.markdown(
+            f"La partie neuronale ne décide pas seule : elle ajoute à la base floue une correction "
+            f"bornée à ±{MLP_NS_MAX_DELTA * 100:.0f} points. Cette correction reste opaque, mais son "
+            "poids dans la décision est connu exactement."
+        )
+    else:
+        st.markdown(
+            f"Valeurs de Shapley exactes : le réseau est évalué sur toutes les combinaisons de ses "
+            f"{len(contribs)} entrées, une entrée absente prenant sa valeur moyenne sur le cycle (état "
+            "inactif pour un état symbolique). La référence plus les contributions redonnent exactement "
+            f"la décision du réseau ({ref_shap * 100:.1f} % + contributions = {alpha_explique * 100:.1f} %)."
+        )
+        if strategie in ("EMS_LSTM", "EMS_LSTM_neurosymbolic"):
+            st.caption(f"Chaque entrée compte pour tout son historique sur les {LSTM_WINDOW} dernières secondes.")
+        if strategie == "EMS_LSTM_neurosymbolic":
+            total = sum(abs(v) for _, v in contribs) or 1.0
+            st.metric("Poids des états symboliques", f"{sum(abs(v) for c, v in contribs if c in xai.ETATS_SYMBOLIQUES) / total * 100:.0f} %")
+        if strategie == "EMS_GNN":
+            st.markdown("**Lecture par composant du graphe** (gradient × entrée, estimation locale)")
+            pct_g, edge = _attribution_gnn(p_dem, soc_eb, soc_pb, accel)
+            st.plotly_chart(_graphe_gnn(pct_g, edge), width="stretch")
+
+
+# Onglet « Et si… ? » : que déciderait le modèle si la situation changeait un peu ?
+
+@st.cache_data(show_spinner="Calcul des scénarios « Et si… ? »…")
+def _et_si(strategie, instant, signature):
+    s = xai.situation(df, resultats[strategie], instant)
+    base = xai.alpha_decision(strategie, df, resultats[strategie], instant)
+    scenarios = [
+        ("SOC de la PB + 5 points", "SOC_PB", min(s["SOC_PB"] + 0.05, 1.0), +1),
+        ("SOC de la PB − 5 points", "SOC_PB", max(s["SOC_PB"] - 0.05, 0.0), -1),
+        ("SOC de l'EB + 5 points", "SOC_EB", min(s["SOC_EB"] + 0.05, 1.0), -1),
+        ("SOC de l'EB − 5 points", "SOC_EB", max(s["SOC_EB"] - 0.05, 0.0), +1),
+        ("Demande + 1 kW", "hasPower", s["hasPower"] + 1000.0, +1),
+        ("Demande − 1 kW", "hasPower", s["hasPower"] - 1000.0, -1),
+    ]
+    sortie = []
+    for libelle, grandeur, valeur, sens in scenarios:
+        a = xai.alpha_decision(strategie, df, resultats[strategie], instant, {grandeur: valeur})
+        p = valeur if grandeur == "hasPower" else s["hasPower"]
+        sortie.append((libelle, a, a * p, sens))
+    return base, base * s["hasPower"], sortie
+
+
+with onglet_etsi:
+    if demande_nulle:
+        st.info("Demande quasi nulle : choisissez un instant de traction ou de freinage.")
+    else:
+        base_a, base_p, scenarios = _et_si(strategie, instant, _signature(strategie))
+        st.markdown(
+            f"Que déciderait **{nom_affichage(strategie)}** si la situation changeait un peu ? "
+            f"Aujourd'hui : **{base_a * 100:.1f} %** pour la PB ({kw(base_p)})."
+        )
+        st.dataframe(
+            [
+                {
+                    "Scénario": libelle,
+                    "Part de la PB": f"{a * 100:.1f} %",
+                    "Puissance PB": kw(p),
+                    "Variation de la puissance PB": f"{(p - base_p) / 1000:+.2f} kW",
+                    "Sens physiquement attendu": "✓" if sens * (p - base_p) >= -0.01 * abs(p_dem) else "✗",
+                }
+                for libelle, a, p, sens in scenarios
+            ],
+            hide_index=True, width="stretch",
+        )
+        st.caption(
+            "Sens attendu : plus de charge dans la PB, ou plus de demande, ne doit pas réduire la "
+            "puissance de la PB ; plus de charge dans l'EB ne doit pas l'augmenter (à 1 % de la "
+            "demande près). C'est le test E3 de cohérence physique, appliqué à cet instant."
+        )
+        st.markdown("**D'après les seuils de l'ontologie**")
+        for phrase in ox.contrefactuels(p_dem, soc_eb, soc_pb):
+            st.markdown(f"- {phrase}")
+        echecs = [
+            f"**{r['id']}** ({r['lecture']}) : "
+            + " ; ".join(f"`{d['texte']}` non vérifié" for d in r["details"] if d["ok"] is False)
+            for r in non_activees if r["type"] in ("mode", "repartition")
+        ]
+        if echecs:
+            with st.expander("Règles de l'ontologie non activées, et pourquoi"):
+                st.markdown("\n".join(f"- {e}" for e in echecs))
+
+
+# Onglet « Sur tout le cycle » : indicateurs d'explicabilité
 
 @st.cache_data(show_spinner="Analyse du cycle…")
 def _analyse_cycle(p, accel_c, soc_eb_c, soc_pb_c, a_req, a_fin, corr):
@@ -696,7 +762,7 @@ def _par_minute(y, pas=60):
         return np.nanmean(np.asarray(y[:k], dtype=float).reshape(-1, pas), axis=1)
 
 
-with tab_cycle:
+with onglet_cycle:
     cy = _analyse_cycle(
         df["hasPower"].to_numpy(dtype=float)[:n],
         (df["hasAcceleration"].to_numpy(dtype=float) if "hasAcceleration" in df.columns else np.zeros(len(df)))[:n],
@@ -709,7 +775,6 @@ with tab_cycle:
     m = cy["actif"] & ~np.isnan(cy["alpha_onto"])
     ecart_onto = np.abs(cy["a_fin"][m] - cy["alpha_onto"][m])
 
-    st.subheader("Indicateurs d'explicabilité")
     e3, e3_detail = _coherence(strategie, _signature(strategie))
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Explication", "exacte" if exacte else "approchée")
@@ -717,34 +782,22 @@ with tab_cycle:
     k3.metric("Accord avec la règle de l'ontologie", f"{np.mean(ecart_onto < 0.05) * 100:.0f} %")
     k4.metric("Décisions corrigées par le filtre", f"{np.mean(cy['corr'][cy['actif']]) * 100:.1f} %")
     st.caption(
-        f"Cohérence physique : part de {120} instants de traction où la décision varie dans le "
-        "sens attendu quand on augmente le SOC d'une batterie ou la demande "
-        + " (" + " ; ".join(f"{k} : {v * 100:.0f} %" for k, v in e3_detail.items()) + "). "
-        "Accord avec la règle de l'ontologie : part des instants où la décision reste à moins "
-        f"de 5 points de la répartition prescrite par OntoHESS (écart moyen : "
-        f"{np.mean(ecart_onto) * 100:.1f} points)."
+        "Cohérence physique : part de 120 instants de traction où la décision varie dans le sens "
+        "attendu (" + " ; ".join(f"{k} : {v * 100:.0f} %" for k, v in e3_detail.items()) + "). "
+        "Accord avec la règle de l'ontologie : part des instants où la décision reste à moins de "
+        f"5 points de la répartition prescrite par OntoHESS (écart moyen : {np.mean(ecart_onto) * 100:.1f} points)."
     )
 
     utilise_flou = strategie in ("EMS_fuzzy_logic", "EMS_MLP_neurosymbolic")
     if utilise_flou:
         a = cy["actif"]
-        nb_regles = np.mean(np.sum(cy["forces"][a] > 0.05, axis=1))
         j1, j2, j3 = st.columns(3)
-        j1.metric("Règles floues actives par décision", f"{nb_regles:.1f}")
+        j1.metric("Règles floues actives par décision", f"{np.mean(np.sum(cy['forces'][a] > 0.05, axis=1)):.1f}")
         if strategie == "EMS_MLP_neurosymbolic":
             delta = np.abs(cy["a_req"][a] - cy["alpha_flou"][a])
             j2.metric("Marge de correction utilisée", f"{np.mean(delta) / MLP_NS_MAX_DELTA * 100:.0f} %")
             j3.metric("Décisions laissées aux règles seules", f"{np.mean(delta < 0.02) * 100:.1f} %")
-            st.caption(
-                "Marge utilisée : correction moyenne du réseau rapportée à sa borne "
-                f"(±{MLP_NS_MAX_DELTA * 100:.0f} points). Décisions laissées aux règles : part des "
-                "instants où le réseau corrige de moins de 2 points. Une marge très utilisée "
-                "signifie que la cible apprise s'éloigne nettement de la base floue."
-            )
-        else:
-            st.caption("Nombre moyen de règles floues activées à plus de 5 % : plus il est faible, plus l'explication est concise.")
 
-    # Évolution sur le cycle, en moyennes par minute
     temps = df["time"].to_numpy(dtype=float)[:n] if "time" in df.columns else np.arange(n, dtype=float)
     xm = _par_minute(temps) / 60.0
     traces = [
@@ -753,7 +806,7 @@ with tab_cycle:
         go.Scatter(x=xm, y=_par_minute(cy["alpha_onto"]) * 100, name="Règle de l'ontologie",
                    line=dict(color=COULEUR_REFERENCE, width=1.6, dash="dash")),
     ]
-    if utilise_flou and strategie != "EMS_fuzzy_logic":
+    if strategie == "EMS_MLP_neurosymbolic":
         traces.append(
             go.Scatter(x=xm, y=_par_minute(np.where(cy["actif"], cy["alpha_flou"], np.nan)) * 100,
                        name="Base floue", line=dict(color=C_GRIS, width=1.6, dash="dot"))
@@ -764,28 +817,20 @@ with tab_cycle:
         xaxis_title="Temps (min)", yaxis_title="Part confiée à la PB (%, moyenne par minute)",
         legend=dict(orientation="h", y=1.1),
     )
-    st.subheader("Décision et règle de référence au fil du cycle")
+    st.markdown("**Décision et règle de référence au fil du cycle**")
     st.plotly_chart(fig_c, width="stretch")
 
     if utilise_flou:
-        st.subheader("Règles floues dominantes sur le cycle")
+        st.markdown("**Règles floues dominantes sur le cycle**")
         dom = cy["dominante"][cy["actif"]]
         regles, comptes = np.unique(dom, return_counts=True)
         ordre = list(np.argsort(comptes)[::-1])
         st.plotly_chart(
             _barres_h(
-                [ox.REGLES_FLOUES.get(regles[i], (regles[i],))[0] for i in ordre],
-                [comptes[i] / comptes.sum() * 100 for i in ordre],
-                [C_GRIS] * len(ordre),
-                "Part des instants où la règle domine (%)",
-                "%{y} : %{x:.0f} %<extra></extra>",
+                [_lib_regle(regles[i]) for i in ordre], [comptes[i] / comptes.sum() * 100 for i in ordre],
+                [C_GRIS] * len(ordre), "Part des instants où la règle domine (%)", "%{y} : %{x:.0f} %<extra></extra>",
             ),
             width="stretch",
-        )
-    elif not exacte:
-        st.caption(
-            "Ce modèle n'a pas de règles internes : son explication reste approchée, instant "
-            "par instant (onglet « À cet instant »)."
         )
 
 

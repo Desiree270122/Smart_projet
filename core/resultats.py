@@ -33,8 +33,8 @@ LIBELLES = {
     "EMS_MLP": "MLP",
     "EMS_LSTM": "LSTM",
     "EMS_GNN": "GNN",
-    "EMS_MLP_neurosymbolic": "NS-1 · MLP + règles floues",
-    "EMS_LSTM_neurosymbolic": "NS-2 · LSTM + états symboliques",
+    "EMS_MLP_neurosymbolic": "NS-MLP",
+    "EMS_LSTM_neurosymbolic": "NS-LSTM",
 }
 
 

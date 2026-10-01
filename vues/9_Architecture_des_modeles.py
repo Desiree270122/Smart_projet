@@ -10,99 +10,66 @@ import streamlit as st
 import ems_core as core
 from core.resultats import nom_affichage, famille, EXPLICABILITE
 from core.style import (
-    COULEUR_DECISION, COULEUR_DEMANDE, COULEUR_EB, COULEUR_PB, COULEUR_REFERENCE, COULEUR_SECONDAIRE,
+    flux_html, COULEUR_DECISION, COULEUR_DEMANDE, COULEUR_EB, COULEUR_PB, COULEUR_REFERENCE, COULEUR_SECONDAIRE,
 )
 
 
 # Configuration de page gérée par le routeur Accueil.py.
 
-st.title("🧠 Les modèles d'IA")
-
-st.markdown(
-    "*Toutes les stratégies poursuivent le même objectif : déterminer le coefficient "
-    "`alpha(t)` qui répartit la puissance demandée entre la batterie Énergie et la "
-    "batterie Puissance. Elles se rangent en quatre familles, celles que compare le "
-    "projet 2SMART : règles fixes, ontologie seule, apprentissage seul et approche "
-    "hybride neurosymbolique. Seules certaines s'appuient sur l'ontologie OntoHESS.*"
+st.title("🧠 Architecture des stratégies EMS")
+st.caption(
+    "Comment chaque stratégie transforme les informations du HESS en décision de "
+    "répartition de puissance."
 )
 
 
-# Architecture de décision : deux chemins, avec ou sans connaissances expertes
+# Le principe commun à toutes les stratégies
 
-st.subheader("Architecture globale de décision")
-
-
-def _flux(etapes):
-    html = "<div style='display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:.3rem 0'>"
-    for i, (etape, coul) in enumerate(etapes):
-        html += (
-            f"<span style='border:1px solid {coul};color:{coul};border-radius:9px;"
-            f"padding:6px 11px;font-weight:600;font-size:.86rem'>{etape}</span>"
-        )
-        if i < len(etapes) - 1:
-            html += "<span style='color:#94A3B8;font-weight:800'>&#8594;</span>"
-    return html + "</div>"
-
-
-_DEBUT = [("Cycle de conduite", COULEUR_DEMANDE), ("Variables physiques", COULEUR_SECONDAIRE)]
-_FIN = [
-    ("Modèle EMS : décision alpha", COULEUR_DECISION), ("Filtre physique", COULEUR_SECONDAIRE),
-    ("Batterie Énergie", COULEUR_EB), ("Batterie Puissance", COULEUR_PB),
-]
-
-st.markdown("**Avec connaissances expertes** — logique floue, MLP et LSTM neurosymboliques")
+st.subheader("Le principe commun")
 st.markdown(
-    _flux(_DEBUT + [("Concepts OntoHESS", COULEUR_REFERENCE), ("Règles floues ou états symboliques", COULEUR_REFERENCE)] + _FIN),
+    flux_html(
+        [
+            ("P_dem + SOC_EB + SOC_PB", COULEUR_DEMANDE),
+            ("EMS", COULEUR_DECISION),
+            ("alpha : répartition", COULEUR_DECISION),
+            ("Filtre de sécurité", COULEUR_SECONDAIRE),
+            ("Modèle physique du HESS", COULEUR_SECONDAIRE),
+            ("SOC, puissance, courant", COULEUR_REFERENCE),
+        ]
+    ),
     unsafe_allow_html=True,
 )
-st.markdown("**Sans connaissances expertes** — modèle physique, MLP, LSTM, GNN")
-st.markdown(_flux(_DEBUT + _FIN), unsafe_allow_html=True)
-
-st.caption(
-    "Le modèle physique n'exécute pas l'ontologie : ses branches de décision "
-    "correspondent aux règles SWRL R9 à R17 d'OntoHESS, ce qui permet de le relire "
-    "avec l'ontologie a posteriori."
-)
-
 eq1, eq2 = st.columns(2)
-with eq1:
-    st.latex(r"P_{PB} = \alpha \times P_{dem}")
-with eq2:
-    st.latex(r"P_{EB} = (1 - \alpha) \times P_{dem}")
-
-st.info(
-    "Quelle que soit la stratégie, la décision passe ensuite par un filtre "
-    "physique de sécurité qui vérifie les limites de courant, de puissance et de "
-    "SOC des deux batteries, et corrige alpha si nécessaire."
-)
-
-
-# Architecture électrique : cascade à source de courant contrôlée ([1], fig. 8)
-
-st.subheader("Architecture électrique du HESS")
-
-_part_conv = (core.V_EB_PACK_NOM - core.V_PB_PACK_NOM) / core.V_EB_PACK_NOM
-st.markdown(
-    "Le HESS suit l'architecture « CCS cascade » de Fonseca de Freitas et al. [1] :\n"
-    "- la batterie Puissance est branchée directement sur le bus DC ;\n"
-    "- le convertisseur est placé **en série** entre les deux batteries : il pilote le "
-    "courant de la batterie Énergie et ne traite que la différence de tension entre "
-    f"elles, soit **{_part_conv * 100:.1f} %** de la puissance de l'EB avec "
-    f"{core.V_EB_PACK_NOM:.0f} V et {core.V_PB_PACK_NOM:.1f} V ;\n"
-    "- le convertisseur n'étant pas réversible en tension, la batterie Énergie doit "
-    "rester à une tension supérieure à celle de la batterie Puissance."
-)
-st.latex(
-    r"P_{conv} = (V_{EB} - V_{PB})\,I_{EB} = P_{EB}\,\frac{V_{EB} - V_{PB}}{V_{EB}}"
-    r"\qquad P_{load} = P_{EB} + P_{PB}"
-)
+eq1.latex(r"P_{PB} = \alpha \times P_{dem}")
+eq2.latex(r"P_{EB} = (1 - \alpha) \times P_{dem}")
 st.caption(
-    "[1] C. A. Fonseca de Freitas, P. Bartholomeus, X. Margueron, P. Le Moigne, « Partial "
-    "Power Converter for Electric Vehicle Hybrid Energy Storage System Using a Controlled "
-    "Current Source Cascade Architecture », IEEE Access, vol. 12, 2024 (fig. 8, éq. (9)–(16))."
+    "Toutes les stratégies produisent la même grandeur, alpha, la part de la puissance confiée "
+    "à la batterie Puissance. Un filtre physique de sécurité vérifie ensuite les limites de "
+    "courant, de puissance et de SOC, et corrige alpha si nécessaire. Seules certaines "
+    "stratégies s'appuient sur l'ontologie OntoHESS."
 )
 
-st.divider()
+with st.expander("Architecture électrique du HESS (convertisseur à puissance partielle)"):
+    _part_conv = (core.V_EB_PACK_NOM - core.V_PB_PACK_NOM) / core.V_EB_PACK_NOM
+    st.markdown(
+        "Le HESS suit l'architecture « CCS cascade » de Fonseca de Freitas et al. [1] :\n"
+        "- la batterie Puissance est branchée directement sur le bus DC ;\n"
+        "- le convertisseur est placé **en série** entre les deux batteries : il pilote le "
+        "courant de la batterie Énergie et ne traite que la différence de tension entre "
+        f"elles, soit **{_part_conv * 100:.1f} %** de la puissance de l'EB avec "
+        f"{core.V_EB_PACK_NOM:.0f} V et {core.V_PB_PACK_NOM:.1f} V ;\n"
+        "- le convertisseur n'étant pas réversible en tension, la batterie Énergie doit "
+        "rester à une tension supérieure à celle de la batterie Puissance."
+    )
+    st.latex(
+        r"P_{conv} = (V_{EB} - V_{PB})\,I_{EB} = P_{EB}\,\frac{V_{EB} - V_{PB}}{V_{EB}}"
+        r"\qquad P_{load} = P_{EB} + P_{PB}"
+    )
+    st.caption(
+        "[1] C. A. Fonseca de Freitas, P. Bartholomeus, X. Margueron, P. Le Moigne, « Partial "
+        "Power Converter for Electric Vehicle Hybrid Energy Storage System Using a Controlled "
+        "Current Source Cascade Architecture », IEEE Access, vol. 12, 2024 (fig. 8, éq. (9)–(16))."
+    )
 
 
 # Fiche détaillée par modèle : à quoi ça sert, comment ça fonctionne, sur quoi
@@ -258,34 +225,76 @@ FICHES = {
 }
 
 
-for cle in core.MODEL_ORDER:
-    fiche = FICHES.get(cle)
-    if fiche is None:
-        continue
+FLUX = {
+    "EMS_power_limitation": [("P_dem, SOC EB", COULEUR_DEMANDE), ("Règles physiques", COULEUR_REFERENCE),
+                             ("Limitation de puissance de l'EB", COULEUR_SECONDAIRE), ("alpha", COULEUR_DECISION)],
+    "EMS_fuzzy_logic": [("Entrées", COULEUR_DEMANDE), ("Fonctions d'appartenance", COULEUR_REFERENCE),
+                        ("Règles SI … ALORS", COULEUR_REFERENCE), ("alpha", COULEUR_DECISION)],
+    "EMS_MLP": [("Entrées instantanées", COULEUR_DEMANDE), ("MLP", COULEUR_SECONDAIRE), ("alpha", COULEUR_DECISION)],
+    "EMS_LSTM": [(f"Séquence des {core.LSTM_WINDOW} dernières secondes", COULEUR_DEMANDE), ("LSTM", COULEUR_SECONDAIRE),
+                 ("Variations de SOC prédites", COULEUR_SECONDAIRE), ("alpha", COULEUR_DECISION)],
+    "EMS_GNN": [("Graphe du HESS", COULEUR_DEMANDE), ("GNN", COULEUR_SECONDAIRE), ("alpha", COULEUR_DECISION)],
+    "EMS_MLP_neurosymbolic": [("Entrées", COULEUR_DEMANDE), ("Règles floues", COULEUR_REFERENCE),
+                              ("alpha de base", COULEUR_DECISION),
+                              (f"+ correction MLP bornée (±{core.MLP_NS_MAX_DELTA:g})", COULEUR_SECONDAIRE),
+                              ("alpha final", COULEUR_DECISION)],
+    "EMS_LSTM_neurosymbolic": [(f"Historique ({core.LSTM_WINDOW} s) + 4 états symboliques", COULEUR_DEMANDE),
+                               ("LSTM", COULEUR_SECONDAIRE), ("alpha", COULEUR_DECISION)],
+}
 
+
+def _carte(cle):
+    fiche = FICHES[cle]
     with st.container(border=True):
-        st.subheader(nom_affichage(cle))
+        st.markdown(f"#### {nom_affichage(cle)}")
         st.caption(f"{fiche['famille']}  ·  famille « {famille(cle)} »")
+        st.markdown(flux_html(FLUX[cle]), unsafe_allow_html=True)
+        with st.expander("Détails"):
+            st.markdown(f"**À quoi ça sert** — {fiche['role']}")
+            st.markdown("**Comment ça fonctionne**\n" + "\n".join(f"- {point}" for point in fiche["fonctionnement"]))
+            st.markdown(f"**Sur quoi il a été entraîné** — {fiche['cible']}")
+            st.markdown(f"**Données d'entrée** — {fiche['entrees']}")
 
-        st.markdown("**À quoi ça sert**")
-        st.write(fiche["role"])
 
-        st.markdown("**Comment ça fonctionne**")
-        st.markdown("\n".join(f"- {point}" for point in fiche["fonctionnement"]))
+st.subheader("Les sept architectures")
+_classiques = [c for c in core.MODEL_ORDER if c in FICHES and "neurosymbolic" not in c]
+for i in range(0, len(_classiques), 2):
+    colonnes = st.columns(2)
+    for col, cle in zip(colonnes, _classiques[i:i + 2]):
+        with col:
+            _carte(cle)
 
-        st.markdown("**Sur quoi il a été entraîné**")
-        st.write(fiche["cible"])
 
-        st.markdown("**Données d'entrée**")
-        st.write(fiche["entrees"])
+# Les deux architectures neuro-symboliques, au cœur du projet
 
+st.subheader("Pourquoi deux architectures neuro-symboliques ?")
+st.markdown(
+    "Les deux modèles combinent connaissances expertes et apprentissage, mais pas au même "
+    "endroit de la chaîne de décision. Les comparer permet de voir ce que change la place "
+    "du symbolique."
+)
+ns1, ns2 = st.columns(2)
+with ns1:
+    _carte("EMS_MLP_neurosymbolic")
+    st.info(
+        "**NS-MLP** — le symbolique intervient comme **socle de décision** : les règles floues "
+        "proposent une répartition, puis le MLP apprend une correction bornée. La décision se "
+        "décompose exactement en « règles + correction »."
+    )
+with ns2:
+    _carte("EMS_LSTM_neurosymbolic")
+    st.info(
+        "**NS-LSTM** — le réseau exploite **l'information temporelle** tout en recevant des "
+        "états symboliques comme informations supplémentaires. Le symbolique éclaire la "
+        "décision sans la structurer."
+    )
 
 st.divider()
 
 
 # Synthèse comparative des familles
 
-st.subheader("Comparaison des stratégies")
+st.subheader("Comparaison technique des architectures")
 
 _NIVEAU_TEXTE = {3: "Par construction", 2: "Partielle", 1: "Post-hoc"}
 

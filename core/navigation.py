@@ -15,11 +15,11 @@ ORDRE_PAGES = [
     ("🏠 Tableau de bord", "vues/1_Accueil.py"),
     ("📂 Préparer une simulation", "vues/2_Preparation_donnees.py"),
     ("▶️ Lancer une simulation", "vues/8_Simulation_cycle_personnalise.py"),
+    ("📈 Résultats de simulation", "vues/6_Resultats_et_Analyse.py"),
+    ("📊 Comparaison des stratégies EMS", "vues/5_Comparaison_des_strategies.py"),
     ("💡 Pourquoi cette décision ?", "vues/7_Explicabilite.py"),
-    ("🧠 Les modèles d'IA", "vues/9_Architecture_des_modeles.py"),
+    ("🧠 Architecture des stratégies EMS", "vues/9_Architecture_des_modeles.py"),
     ("📚 Base de connaissances", "vues/3_Ontologie_OntoHESS.py"),
-    ("⚖️ Comparer les méthodes", "vues/5_Comparaison_des_strategies.py"),
-    ("📈 Explorer les résultats", "vues/6_Resultats_et_Analyse.py"),
 ]
 
 

@@ -46,3 +46,17 @@ COULEUR_SECONDAIRE = "#8B93A7"     # repère secondaire (base floue, arêtes, ax
 def couleur(cle: str) -> str:
     """Couleur d'une stratégie à partir de sa clé interne."""
     return PALETTE.get(cle, COULEUR_NEUTRE)
+
+
+def flux_html(etapes) -> str:
+    """Chaîne d'étapes reliées par des flèches, à afficher avec
+    st.markdown(..., unsafe_allow_html=True). etapes : [(texte, couleur)]."""
+    html = "<div style='display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:.4rem 0'>"
+    for i, (texte, coul) in enumerate(etapes):
+        html += (
+            f"<span style='border:1px solid {coul};color:{coul};border-radius:9px;"
+            f"padding:5px 10px;font-weight:600;font-size:.86rem'>{texte}</span>"
+        )
+        if i < len(etapes) - 1:
+            html += "<span style='color:#94A3B8;font-weight:800'>&#8594;</span>"
+    return html + "</div>"

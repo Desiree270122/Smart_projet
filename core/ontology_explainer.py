@@ -505,6 +505,52 @@ LECTURE_REGLES = {
         ("repartition", "l'EB absorbe toute l'énergie récupérée"),
 }
 
+# Conditions de ces règles en français courant, seuils compris.
+CONDITIONS_EN_FRANCAIS = {
+    ("greaterThan", ("P", "0")): "le véhicule est en traction",
+    ("lessThan", ("P", "0")): "le véhicule freine",
+    ("greaterThan", ("P", "pmax")):
+        f"la demande dépasse la limite de décharge de la batterie Énergie ({core.P_EB_MAX_W / 1000:.1f} kW)",
+    ("lessThanOrEqual", ("P", "pmax")):
+        f"la demande ne dépasse pas la limite de décharge de la batterie Énergie ({core.P_EB_MAX_W / 1000:.1f} kW)",
+    ("lessThan", ("P", "pmin")):
+        f"la puissance récupérée dépasse ce que la batterie Énergie peut absorber ({-core.P_EB_MIN_W / 1000:.1f} kW)",
+    ("greaterThanOrEqual", ("P", "pmin")):
+        f"la batterie Énergie peut absorber toute la puissance récupérée (jusqu'à {-core.P_EB_MIN_W / 1000:.1f} kW)",
+    ("lessThanOrEqual", ("soc", "smin")):
+        f"le SOC de la batterie Énergie a atteint son minimum ({core.SOC_EB_MIN * 100:.0f} %)",
+    ("greaterThan", ("soc", "smin")):
+        f"le SOC de la batterie Énergie est au-dessus de son minimum ({core.SOC_EB_MIN * 100:.0f} %)",
+}
+
+
+def regle_en_phrase(regle):
+    """« Si …, alors … » en français courant pour une règle de mode ou de
+    répartition ; conditions en notation brute pour les autres."""
+    morceaux = [
+        CONDITIONS_EN_FRANCAIS.get((op, tuple(args)), f"{args[0]} {COMPARATEURS[op]} {args[1]}")
+        for _, op, args in regle["conditions"]
+        if len(args) >= 2
+    ]
+    type_regle, lecture = lire_regle(regle)
+    if not morceaux:
+        return lecture[0].upper() + lecture[1:] + "."
+    si = ", et ".join(morceaux) if len(morceaux) > 2 else " et que ".join(morceaux)
+    mode = next((args[1] for p, args in regle.get("affectations", []) if p == "hasOperatingModeDriventrain"), None)
+    if type_regle == "mode" and mode in SENS_DES_MODES:
+        return f"Si {si}, alors le mode de fonctionnement est « {mode} » : {SENS_DES_MODES[mode]}."
+    return f"Si {si}, alors {lecture}."
+
+
+# Sens des modes de fonctionnement affectés par les règles R9 à R12.
+SENS_DES_MODES = {
+    "Normal": "l'EB suffit à fournir la demande",
+    "Surcharge": "la PB doit assister l'EB (le HESS lui-même n'est pas en surcharge)",
+    "ProtectionEB": "l'EB doit être protégée",
+    "Recuperation": "de l'énergie est récupérée",
+}
+
+
 # Règles floues : libellé court, et concepts de l'ontologie qu'elles mobilisent
 # (classes d'OntoHESS entre parenthèses).
 REGLES_FLOUES = {

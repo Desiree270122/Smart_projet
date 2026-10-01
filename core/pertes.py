@@ -35,18 +35,29 @@ def resistances_packs():
     return r_eb, r_pb
 
 
-def bilan_pertes(traj, rendement=RENDEMENT_CONVERTISSEUR):
-    """Pertes estimées (Wh) d'une trajectoire : EB, PB, convertisseur, total,
-    et leur part dans l'énergie de traction fournie au bus."""
+def pertes_par_pas(traj, rendement=RENDEMENT_CONVERTISSEUR):
+    """Puissances perdues (W) à chaque pas : batterie Énergie, batterie Puissance,
+    convertisseur."""
     r_eb, r_pb = resistances_packs()
     i_eb = np.asarray(traj["I_EB"], dtype=float)
     i_pb = np.asarray(traj["I_PB"], dtype=float)
     p_conv = (core.V_EB_PACK_NOM - core.V_PB_PACK_NOM) * i_eb
+    return {
+        "eb": r_eb * i_eb ** 2,
+        "pb": r_pb * i_pb ** 2,
+        "convertisseur": (1.0 - rendement) * np.abs(p_conv),
+    }
+
+
+def bilan_pertes(traj, rendement=RENDEMENT_CONVERTISSEUR):
+    """Pertes estimées (Wh) d'une trajectoire : EB, PB, convertisseur, total,
+    et leur part dans l'énergie de traction fournie au bus."""
+    pas = pertes_par_pas(traj, rendement)
     h = core.DT_SECONDS / 3600.0
 
-    eb = float(np.sum(r_eb * i_eb ** 2)) * h
-    pb = float(np.sum(r_pb * i_pb ** 2)) * h
-    conv = float(np.sum((1.0 - rendement) * np.abs(p_conv))) * h
+    eb = float(np.sum(pas["eb"])) * h
+    pb = float(np.sum(pas["pb"])) * h
+    conv = float(np.sum(pas["convertisseur"])) * h
     total = eb + pb + conv
 
     p_bus = np.asarray(traj["P_EB"], dtype=float) + np.asarray(traj["P_PB"], dtype=float)
