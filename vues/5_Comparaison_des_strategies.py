@@ -27,12 +27,9 @@ from core.resultats import (
     calculer_metriques,
     charger_reference,
     choisir_cycle,
-    cycle_artemis_affiche,
-    debut_partie_test,
     famille,
     libelle_cycle,
     nom_affichage,
-    restreindre,
 )
 from core.style import couleur
 
@@ -73,65 +70,20 @@ if not resultats or df is None:
     st.stop()
 
 noms = list(resultats.keys())
-n_cycle = min([len(df)] + [len(t["P_EB"]) for t in resultats.values()])
 signature = tuple(sorted((n, float(np.nansum(t["alpha_final"]))) for n, t in resultats.items()))
 
-# Les stratégies à apprentissage ont été réglées sur les premiers 75 % du cycle
-# Artemis : la partie restante est une évaluation sur des situations jamais vues.
-c_cycle, c_partie = st.columns([2, 3])
-choisir_cycle(st, c_cycle)
-debut_eval = 0
-if cycle_artemis_affiche(st):
-    partie = c_partie.radio(
-        tr("Instants évalués", "Time span evaluated"), ["complet", "test"], horizontal=True,
-        format_func={
-            "complet": tr("Cycle complet", "Full cycle"),
-            "test": tr("Dernier quart seulement (jamais vu à l'apprentissage)", "Last quarter only (never seen in training)"),
-        }.get,
-        help=tr(
-            "Les stratégies à apprentissage ont été réglées sur la première moitié du cycle Artemis "
-            "et vérifiées sur le quart suivant.",
-            "The learning-based strategies were tuned on the first half of the Artemis cycle and "
-            "checked on the following quarter.",
-        ),
-    )
-    if partie == "test":
-        debut_eval = debut_partie_test(n_cycle)
-        st.caption(tr(
-            "Évaluation sur les {m} dernières minutes : chaque stratégie y arrive avec ses propres "
-            "états de charge, hérités du début du cycle.",
-            "Evaluation over the last {m} minutes: each strategy starts it with its own states of "
-            "charge, inherited from the beginning of the cycle.",
-            m=nombre((n_cycle - debut_eval) / 60, 0),
-        ))
-    else:
-        st.caption(tr(
-            "Sur le cycle complet, les trois quarts des instants ont servi à régler les stratégies "
-            "à apprentissage : leurs résultats y sont plus favorables que sur des situations nouvelles.",
-            "Over the full cycle, three quarters of the time steps were used to tune the "
-            "learning-based strategies: their results there are more favourable than on new situations.",
-        ))
-else:
-    c_partie.caption(tr(
-        "Ce cycle n'a pas servi à régler les stratégies à apprentissage : toute la comparaison "
-        "porte sur des situations nouvelles pour elles.",
-        "This cycle was not used to tune the learning-based strategies: the whole comparison is "
-        "on situations that are new to them.",
-    ))
+choisir_cycle(st, st.columns([2, 3])[0])
 
 
 @st.cache_data(show_spinner=False)
-def _metriques(signature, debut):
-    donnees = {"resultats": resultats, "cycle_df": df}
-    if debut:
-        donnees = restreindre(donnees, debut, n_cycle)
-    m = calculer_metriques(donnees)
+def _metriques(signature):
+    m = calculer_metriques({"resultats": resultats, "cycle_df": df})
     for v in m.values():
         v["violations_totales"] = v["nb_violations"] + v["nb_violations_courant"]
     return m
 
 
-metriques = _metriques(signature, debut_eval)
+metriques = _metriques(signature)
 st.caption(tr("Données : {s} · {n} stratégies", "Data: {s} · {n} strategies", s=source, n=len(noms)))
 
 with st.expander(tr("Définition des métriques", "Definition of the metrics")):

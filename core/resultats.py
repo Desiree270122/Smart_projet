@@ -196,45 +196,6 @@ def _somme_wh(puissance) -> float:
     return float(np.nansum(np.asarray(puissance, dtype=float))) * core.DT_SECONDS / 3600.0
 
 
-# Découpage temporel des notebooks (01_configuration.ipynb) : les réseaux sont
-# entraînés sur les premiers 50 % du cycle Artemis, validés sur les 25 % suivants
-# et testés sur les 25 % restants, qu'ils n'ont jamais vus.
-PART_ENTRAINEMENT, PART_VALIDATION = 0.50, 0.25
-
-
-def debut_partie_test(n: int) -> int:
-    """Premier instant de la partie test du cycle Artemis (n instants)."""
-    return int(n * PART_ENTRAINEMENT) + int(n * PART_VALIDATION)
-
-
-def cycle_artemis_affiche(st) -> bool:
-    """Vrai si les résultats affichés portent sur le cycle Artemis, le seul dont
-    une partie a servi à l'entraînement."""
-    choix = st.session_state.get("_donnees_chargees")
-    if choix == CYCLE_PERSONNALISE:
-        meta = st.session_state.get(CLE_PERSONNALISE, {}).get("meta", {})
-        return meta.get("cycle_cle") == "artemis"
-    return choix in (None, "artemis")
-
-
-def restreindre(donnees: dict, debut: int, fin=None) -> dict:
-    """Mêmes données {resultats, cycle_df}, limitées aux instants [debut, fin)."""
-    df = donnees["cycle_df"]
-    n = len(df)
-    fin = n if fin is None else fin
-    resultats = {}
-    for nom, traj in donnees["resultats"].items():
-        coupe = {}
-        for cle, valeur in traj.items():
-            v = np.asarray(valeur) if isinstance(valeur, (list, np.ndarray)) else None
-            if v is not None and v.ndim == 1 and len(v) in (n, n + 1):
-                coupe[cle] = v[debut: fin + (len(v) - n)]
-            else:
-                coupe[cle] = valeur
-        resultats[nom] = coupe
-    return {"resultats": resultats, "cycle_df": df.iloc[debut:fin].reset_index(drop=True)}
-
-
 def calculer_metriques(donnees: dict) -> dict:
     """Calcule, pour chaque stratégie, un jeu complet de métriques comparables,
     à partir des trajectoires et du cycle précalculés.

@@ -16,6 +16,7 @@ import streamlit as st
 
 import ems_core as core
 from core.format import nombre, separateurs_plotly
+from core.lecture import aide_survol, bulle, courbe_explication, lire_repartition, lire_soc
 from core.i18n import tr
 from core.resultats import assurer_donnees_session, calculer_metriques, choisir_cycle, nom_affichage
 from core.style import (
@@ -172,16 +173,17 @@ st.subheader(tr("Évolution des états de charge", "State of charge over time"))
 fig_soc = go.Figure(
     [
         go.Scatter(x=np.arange(len(soc_eb)) * core.DT_SECONDS / 60.0, y=soc_eb * 100, name=eb,
-                   line=dict(color=COULEUR_EB, width=2)),
+                   line=dict(color=COULEUR_EB, width=2), hovertemplate=bulle(eb, "%{y:.1f} %")),
         go.Scatter(x=np.arange(len(soc_pb)) * core.DT_SECONDS / 60.0, y=soc_pb * 100, name=pb,
-                   line=dict(color=COULEUR_PB, width=2)),
+                   line=dict(color=COULEUR_PB, width=2), hovertemplate=bulle(pb, "%{y:.1f} %")),
+        courbe_explication(np.arange(len(soc_eb)) * core.DT_SECONDS / 60.0, soc_eb * 100, lire_soc(traj), acceleree=False),
     ]
 )
 fig_soc.add_hline(y=core.SOC_EB_MIN * 100, line=dict(color=COULEUR_VIOLATION, dash="dot", width=1),
                   annotation_text=tr("SOC minimal", "Minimum SOC"), annotation_position="bottom right")
 fig_soc.update_layout(
     separators=separateurs_plotly(), height=300, margin=dict(t=10, b=40, l=10, r=10), hovermode="x unified",
-    xaxis_title=tr("Temps (min)", "Time (min)"), yaxis=dict(title="SOC (%)", range=[0, 102]),
+    xaxis=dict(title=tr("Temps (min)", "Time (min)"), hoverformat=".1f"), yaxis=dict(title="SOC (%)", range=[0, 102]),
     legend=dict(orientation="h", y=1.12, x=0),
 )
 st.plotly_chart(fig_soc, width="stretch")
@@ -192,22 +194,26 @@ st.caption(tr(
     "glisser la réglette sous le graphique pour zoomer sur une portion du cycle.",
     "The vehicle demands a power; the EMS splits it between the two batteries. Drag the slider "
     "below the chart to zoom in on part of the cycle.",
-))
+) + " " + aide_survol())
 # Portion du cycle affichée à l'ouverture (15 minutes), ajustable avec la réglette.
 debut_vue = float(min(60.0, max(0.0, temps_min[-1] - 15.0)))
 vue = [debut_vue, float(min(debut_vue + 15.0, temps_min[-1]))]
 fig_p = go.Figure(
     [
         # Courbe non accélérée : c'est elle que la réglette reproduit en miniature.
-        go.Scatter(x=temps_min, y=p_dem / 1000, name=tr("Demande", "Demand"), line=dict(color=COULEUR_DEMANDE, width=1.2)),
-        go.Scattergl(x=temps_min, y=p_eb / 1000, name=eb, line=dict(color=COULEUR_EB, width=1.2)),
-        go.Scattergl(x=temps_min, y=p_pb / 1000, name=pb, line=dict(color=COULEUR_PB, width=1.2)),
+        go.Scatter(x=temps_min, y=p_dem / 1000, name=tr("Demande", "Demand"), line=dict(color=COULEUR_DEMANDE, width=1.2),
+                   hovertemplate=bulle(tr("Demande", "Demand"), "%{y:.1f} kW")),
+        go.Scattergl(x=temps_min, y=p_eb / 1000, name=eb, line=dict(color=COULEUR_EB, width=1.2),
+                     hovertemplate=bulle(eb, "%{y:.1f} kW")),
+        go.Scattergl(x=temps_min, y=p_pb / 1000, name=pb, line=dict(color=COULEUR_PB, width=1.2),
+                     hovertemplate=bulle(pb, "%{y:.1f} kW")),
+        courbe_explication(temps_min, p_dem / 1000, lire_repartition(p_dem, traj, n)),
     ]
 )
 fig_p.update_layout(
     separators=separateurs_plotly(), height=380, margin=dict(t=10, b=10, l=10, r=10), hovermode="x unified",
     yaxis_title=tr("Puissance (kW)", "Power (kW)"),
-    xaxis=dict(title=tr("Temps (min)", "Time (min)"), rangeslider=dict(visible=True, thickness=0.08), range=vue),
+    xaxis=dict(title=tr("Temps (min)", "Time (min)"), rangeslider=dict(visible=True, thickness=0.08), range=vue, hoverformat=".1f"),
     legend=dict(orientation="h", y=1.12, x=0),
 )
 st.plotly_chart(fig_p, width="stretch")

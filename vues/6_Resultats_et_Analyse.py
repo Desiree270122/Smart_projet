@@ -20,12 +20,10 @@ from plotly.subplots import make_subplots
 import ems_core as core
 from core.format import nombre, separateurs_plotly
 from core.i18n import langue, tr
+from core.lecture import aide_survol, bulle, courbe_explication, lire_composant, lire_repartition, lire_soc
 from core.navigation import pied_navigation
 from core.pertes import pertes_par_pas
-from core.resultats import (
-    assurer_donnees_session, calculer_metriques, choisir_cycle, cycle_artemis_affiche, debut_partie_test,
-    nom_affichage,
-)
+from core.resultats import assurer_donnees_session, calculer_metriques, choisir_cycle, nom_affichage
 from core.style import (
     COULEUR_CONVERTISSEUR,
     COULEUR_DEMANDE,
@@ -122,6 +120,7 @@ aide_reglette = tr(
     "Faites glisser la réglette sous le graphique pour parcourir le cycle.",
     "Drag the slider under the chart to move through the cycle.",
 )
+aide_survol = aide_survol()
 
 
 # 1 — Répartition de la puissance
@@ -130,25 +129,23 @@ st.subheader(tr(
     "Comment la demande de puissance est-elle répartie entre les deux batteries ?",
     "How is the power demand shared between the two batteries?",
 ))
-st.caption(aide_reglette)
+st.caption(aide_survol + " " + aide_reglette)
 fig_p = go.Figure([
     # Courbe non accélérée : c'est elle que la réglette reproduit en miniature.
-    go.Scatter(x=temps_min, y=p_dem / 1000, name=tr("Demande", "Demand"), line=dict(color=COULEUR_DEMANDE, width=1.2)),
-    go.Scattergl(x=temps_min, y=p_eb / 1000, name=nom_eb, line=dict(color=COULEUR_EB, width=1.2)),
-    go.Scattergl(x=temps_min, y=p_pb / 1000, name=nom_pb, line=dict(color=COULEUR_PB, width=1.2)),
+    go.Scatter(x=temps_min, y=p_dem / 1000, name=tr("Demande", "Demand"), line=dict(color=COULEUR_DEMANDE, width=1.2),
+               hovertemplate=bulle(tr("Demande", "Demand"), "%{y:.1f} kW")),
+    go.Scattergl(x=temps_min, y=p_eb / 1000, name=nom_eb, line=dict(color=COULEUR_EB, width=1.2),
+                 hovertemplate=bulle(nom_eb, "%{y:.1f} kW")),
+    go.Scattergl(x=temps_min, y=p_pb / 1000, name=nom_pb, line=dict(color=COULEUR_PB, width=1.2),
+                 hovertemplate=bulle(nom_pb, "%{y:.1f} kW")),
+    courbe_explication(temps_min, p_dem / 1000, lire_repartition(p_dem, traj, n)),
 ])
 fig_p.add_hline(y=core.P_EB_MAX_W / 1000, line=dict(color=COULEUR_SECONDAIRE, dash="dot", width=1),
                 annotation_text=tr("limite de la batterie Énergie", "Energy battery limit"), annotation_position="top left")
-if cycle_artemis_affiche(st):
-    fig_p.add_vrect(
-        x0=temps_min[debut_partie_test(n)], x1=temps_min[-1], fillcolor=COULEUR_SECONDAIRE, opacity=0.12, line_width=0,
-        annotation_text=tr("dernier quart : jamais vu à l'apprentissage", "last quarter: never seen in training"),
-        annotation_position="top right",
-    )
 fig_p.update_layout(
     separators=separateurs_plotly(), height=380, margin=dict(t=10, b=10, l=10, r=10), hovermode="x unified",
     yaxis_title=tr("Puissance (kW)", "Power (kW)"),
-    xaxis=dict(title=axe_temps, rangeslider=dict(visible=True, thickness=0.08), range=vue),
+    xaxis=dict(title=axe_temps, rangeslider=dict(visible=True, thickness=0.08), range=vue, hoverformat=".1f"),
     legend=dict(orientation="h", y=1.12, x=0),
 )
 st.plotly_chart(fig_p, width="stretch")
@@ -157,10 +154,14 @@ st.plotly_chart(fig_p, width="stretch")
 # 2 — États de charge
 
 st.subheader(tr("Évolution des états de charge", "State of charge over time"))
+st.caption(aide_survol)
 x_soc = np.arange(len(traj["SOC_EB"])) * core.DT_SECONDS / 60.0
 fig_soc = go.Figure([
-    go.Scatter(x=x_soc, y=np.asarray(traj["SOC_EB"], float) * 100, name=nom_eb, line=dict(color=COULEUR_EB, width=2)),
-    go.Scatter(x=x_soc, y=np.asarray(traj["SOC_PB"], float) * 100, name=nom_pb, line=dict(color=COULEUR_PB, width=2)),
+    go.Scatter(x=x_soc, y=np.asarray(traj["SOC_EB"], float) * 100, name=nom_eb, line=dict(color=COULEUR_EB, width=2),
+               hovertemplate=bulle(nom_eb, "%{y:.1f} %")),
+    go.Scatter(x=x_soc, y=np.asarray(traj["SOC_PB"], float) * 100, name=nom_pb, line=dict(color=COULEUR_PB, width=2),
+               hovertemplate=bulle(nom_pb, "%{y:.1f} %")),
+    courbe_explication(x_soc, np.asarray(traj["SOC_EB"], float) * 100, lire_soc(traj), acceleree=False),
 ])
 fig_soc.add_hline(y=core.SOC_EB_MIN * 100, line=dict(color=COULEUR_VIOLATION, dash="dot", width=1),
                   annotation_text=tr("SOC minimal", "Minimum SOC"), annotation_position="bottom right")
@@ -168,7 +169,7 @@ fig_soc.add_hline(y=core.SOC_EB_MAX * 100, line=dict(color=COULEUR_REFERENCE, da
                   annotation_text=tr("SOC maximal", "Maximum SOC"), annotation_position="top right")
 fig_soc.update_layout(
     separators=separateurs_plotly(), height=320, margin=dict(t=10, b=40, l=10, r=10), hovermode="x unified",
-    xaxis_title=axe_temps, yaxis=dict(title="SOC (%)", range=[0, 105]),
+    xaxis=dict(title=axe_temps, hoverformat=".1f"), yaxis=dict(title="SOC (%)", range=[0, 105]),
     legend=dict(orientation="h", y=1.12, x=0),
 )
 st.plotly_chart(fig_soc, width="stretch")
@@ -185,7 +186,7 @@ st.caption(tr(
     "recharge : il reçoit l'énergie récupérée au freinage. Les pointillés marquent ses limites. ",
     "Above zero the component discharges: it supplies power. Below zero it charges: it receives "
     "the energy recovered while braking. The dotted lines mark its limits. ",
-) + aide_reglette)
+) + aide_survol + " " + aide_reglette)
 
 # (nom, puissance, couleur, limite de décharge, limite de recharge, seuil d'activité en W)
 composants = [
@@ -204,23 +205,23 @@ fig_cd = make_subplots(
     rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.07,
     subplot_titles=[f"{nom} (kW)" for nom, *_ in composants],
 )
-for ligne, (nom, puissance, coul, lim_dech, lim_rech, _) in enumerate(composants, start=1):
+for ligne, (nom, puissance, coul, lim_dech, lim_rech, seuil) in enumerate(composants, start=1):
     # Dernière ligne en courbes non accélérées : la réglette les reproduit en miniature.
     Courbe = go.Scatter if ligne == len(composants) else go.Scattergl
     fig_cd.add_trace(
         Courbe(
-            x=temps_min, y=np.clip(puissance, 0, None) / 1000, name=tr("Décharge", "Discharge"), legendgroup="d",
-            showlegend=False, mode="lines", line=dict(color=coul, width=1), fill="tozeroy", fillcolor=_transparent(coul, 0.55),
-            hovertemplate=tr("décharge", "discharge") + " %{y:.2f} kW<extra></extra>",
+            x=temps_min, y=np.clip(puissance, 0, None) / 1000, name=nom, showlegend=False, mode="lines",
+            line=dict(color=coul, width=1), fill="tozeroy", fillcolor=_transparent(coul, 0.55),
+            # La bulle dit ce que fait le composant : décharge, recharge ou repos, et la part de sa limite.
+            customdata=lire_composant(puissance, lim_dech, lim_rech, seuil), hovertemplate=bulle(nom, "%{customdata}"),
         ),
         row=ligne, col=1,
     )
     fig_cd.add_trace(
         Courbe(
-            x=temps_min, y=np.clip(puissance, None, 0) / 1000, name=tr("Recharge", "Charge"), legendgroup="c",
-            showlegend=False, mode="lines", line=dict(color=coul, width=1, dash="dot"), fill="tozeroy",
-            fillcolor=_transparent(coul, 0.22),
-            hovertemplate=tr("recharge", "charge") + " %{y:.2f} kW<extra></extra>",
+            x=temps_min, y=np.clip(puissance, None, 0) / 1000, name=nom, showlegend=False, mode="lines",
+            line=dict(color=coul, width=1, dash="dot"), fill="tozeroy", fillcolor=_transparent(coul, 0.22),
+            hoverinfo="skip",
         ),
         row=ligne, col=1,
     )
@@ -236,10 +237,11 @@ for ligne, (nom, puissance, coul, lim_dech, lim_rech, _) in enumerate(composants
                 annotation_text=f"{texte} {nombre(limite / 1000, 2 if abs(limite) < 5000 else 1)} kW",
                 annotation_position=position, annotation_font_size=10,
             )
-fig_cd.update_xaxes(range=vue)
+fig_cd.update_xaxes(range=vue, hoverformat=".1f")
 fig_cd.update_xaxes(title_text=axe_temps, rangeslider=dict(visible=True, thickness=0.06), row=3, col=1)
+# hoversubplots : la bulle réunit les trois composants au même instant.
 fig_cd.update_layout(separators=separateurs_plotly(), height=720, margin=dict(t=30, b=10, l=10, r=10),
-                     hovermode="x unified", showlegend=False)
+                     hovermode="x unified", hoversubplots="axis", showlegend=False)
 fig_cd.update_annotations(selector=dict(yanchor="bottom", xanchor="center"), font_size=13)
 st.plotly_chart(fig_cd, width="stretch")
 
@@ -281,22 +283,31 @@ st.subheader(tr("Pertes", "Losses"))
 st.caption(tr(
     "Pertes cumulées au fil du cycle : échauffement de chaque batterie (R·I²) et pertes du convertisseur.",
     "Cumulative losses over the cycle: heating of each battery (R·I²) and converter losses.",
+) + " " + tr(
+    "Au survol : les pertes cumulées, et la puissance perdue à cet instant.",
+    "On hover: the cumulative losses, and the power being lost at that time.",
 ))
 pas = pertes_par_pas(traj)
 cumul = {k: np.cumsum(v[:n]) * heures for k, v in pas.items()}
 total = cumul["eb"] + cumul["pb"] + cumul["convertisseur"]
 pas_graphe = max(1, n // 2000)
+pertes_instant = pas["eb"][:n] + pas["pb"][:n] + pas["convertisseur"][:n]
+valeur_pertes = "%{y:.0f} Wh · " + tr("en ce moment", "right now") + " %{customdata:.0f} W"
 fig_l = go.Figure([
-    go.Scatter(x=temps_min[::pas_graphe], y=cumul["eb"][::pas_graphe], name=nom_eb, line=dict(color=COULEUR_EB, width=1.8)),
-    go.Scatter(x=temps_min[::pas_graphe], y=cumul["pb"][::pas_graphe], name=nom_pb, line=dict(color=COULEUR_PB, width=1.8)),
+    go.Scatter(x=temps_min[::pas_graphe], y=cumul["eb"][::pas_graphe], name=nom_eb, line=dict(color=COULEUR_EB, width=1.8),
+               customdata=pas["eb"][:n][::pas_graphe], hovertemplate=bulle(nom_eb, valeur_pertes)),
+    go.Scatter(x=temps_min[::pas_graphe], y=cumul["pb"][::pas_graphe], name=nom_pb, line=dict(color=COULEUR_PB, width=1.8),
+               customdata=pas["pb"][:n][::pas_graphe], hovertemplate=bulle(nom_pb, valeur_pertes)),
     go.Scatter(x=temps_min[::pas_graphe], y=cumul["convertisseur"][::pas_graphe], name=nom_conv,
-               line=dict(color=COULEUR_CONVERTISSEUR, width=1.8)),
+               line=dict(color=COULEUR_CONVERTISSEUR, width=1.8),
+               customdata=pas["convertisseur"][:n][::pas_graphe], hovertemplate=bulle(nom_conv, valeur_pertes)),
     go.Scatter(x=temps_min[::pas_graphe], y=total[::pas_graphe], name=tr("Pertes totales", "Total losses"),
-               line=dict(color=COULEUR_REFERENCE, width=2.2, dash="dash")),
+               line=dict(color=COULEUR_REFERENCE, width=2.2, dash="dash"),
+               customdata=pertes_instant[::pas_graphe], hovertemplate=bulle(tr("Pertes totales", "Total losses"), valeur_pertes)),
 ])
 fig_l.update_layout(
     separators=separateurs_plotly(), height=320, margin=dict(t=10, b=40, l=10, r=10), hovermode="x unified",
-    xaxis_title=axe_temps, yaxis_title=tr("Pertes cumulées (Wh)", "Cumulative losses (Wh)"),
+    xaxis=dict(title=axe_temps, hoverformat=".1f"), yaxis_title=tr("Pertes cumulées (Wh)", "Cumulative losses (Wh)"),
     legend=dict(orientation="h", y=1.12, x=0),
 )
 st.plotly_chart(fig_l, width="stretch")

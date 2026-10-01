@@ -96,13 +96,32 @@ def test_pages_sur_le_cycle_wltc(page):
     assert not at.exception, _erreurs(at)
 
 
-def test_comparaison_sur_la_partie_test_et_sans_explicabilite():
+def test_comparaison_conclusion_avec_et_sans_explicabilite():
     at = _executer("vues/5_Comparaison_des_strategies.py")
-    at.radio[0].set_value("test").run()
-    assert not at.exception, _erreurs(at)
+    assert at.success, "la conclusion générale doit s'afficher"
     at.checkbox[0].uncheck().run()
     assert not at.exception, _erreurs(at)
     assert at.success, "la conclusion générale doit s'afficher"
+
+
+@pytest.mark.parametrize("langue", LANGUES)
+def test_bulles_d_explication_des_courbes(langue, monkeypatch):
+    """Chaque instant du cycle a sa phrase d'explication, pour chaque stratégie."""
+    from core import format as format_nombres
+    from core import i18n, lecture
+    from core.resultats import charger_reference
+
+    monkeypatch.setattr(i18n, "langue", lambda: langue)
+    monkeypatch.setattr(format_nombres, "langue", lambda: langue)
+    donnees = charger_reference()
+    p_dem = donnees["cycle_df"]["hasPower"].to_numpy(dtype=float)
+    for nom, traj in donnees["resultats"].items():
+        n = min(len(p_dem), len(traj["P_EB"]))
+        textes = lecture.lire_repartition(p_dem, traj, n)
+        assert len(textes) == n and all(textes), nom
+        assert len(lecture.lire_soc(traj)) == len(traj["SOC_EB"]), nom
+    # Une stratégie qui ne fournit pas toute la demande doit le dire dans ses bulles.
+    assert any("⚠" in t for t in lecture.lire_repartition(p_dem, donnees["resultats"]["EMS_MLP"], n))
 
 
 @pytest.mark.parametrize("strategie", ["EMS_MLP_neurosymbolic", "EMS_LSTM_neurosymbolic", "EMS_fuzzy_logic"])
