@@ -1,4 +1,6 @@
-# Vérifie à chaque push que toutes les pages de l'application s'exécutent.
+# Vérifie à chaque push que toutes les pages de l'application s'exécutent
+# (application Streamlit et serveur de calcul de l'application web), et que
+# l'interface web se construit.
 # Une croix rouge sur le commit (onglet « Actions » de GitHub) signale une page
 # cassée. Streamlit Cloud déploie quand même : corriger avant de pousser
 # reste la règle (python -m pytest tests).
@@ -22,6 +24,24 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -r requirements.txt pytest
+          pip install -r requirements-web.txt pytest
       - name: Tests
         run: python -m pytest tests -q
+
+  interface-web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Dépendances
+        run: npm ci
+      - name: Construction de l'interface
+        run: npm run build

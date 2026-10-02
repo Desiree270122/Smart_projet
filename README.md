@@ -31,13 +31,39 @@ streamlit run Accueil.py
 
 `torch_geometric` (nécessaire uniquement pour `EMS_GNN`) est importé de façon paresseuse : son absence ne bloque pas les 6 autres stratégies.
 
+### Application web (les mêmes huit pages, hors Streamlit)
+
+L'application existe aussi sous forme d'application web : un serveur de calcul (`api/`, FastAPI) qui réutilise `ems_core.py` et `core/`, et une interface (`web/`, React). Les deux applications partagent les mêmes calculs et les mêmes textes ; l'application Streamlit continue de fonctionner.
+
+Il faut [Node.js](https://nodejs.org) (version 20 ou plus) en plus de Python.
+
+```bash
+pip install -r requirements-web.txt        # une fois
+cd web && npm install && npm run build      # une fois, puis après chaque modification de web/
+cd .. && python -m uvicorn api.main:app --port 8000
+```
+
+puis ouvrir <http://localhost:8000>. La liste des routes du serveur est à <http://localhost:8000/docs>.
+
+Pour modifier l'interface avec rechargement immédiat : laisser le serveur tourner sur le port 8000, lancer `npm run dev` dans `web/` et ouvrir <http://localhost:5173>.
+
+| Dossier | Rôle |
+|---|---|
+| `api/main.py` | routes du serveur ; sert aussi l'interface construite (`web/dist/`) |
+| `api/analyse.py`, `api/explication.py`, `api/connaissances.py`, `api/simulation.py` | données de chaque page |
+| `api/donnees.py` | cycles de référence, simulations lancées, réglage du moteur de simulation |
+| `web/src/pages/` | les huit pages |
+| `web/src/langue.jsx` | français / anglais : `tr("texte français", "English text", { champ: valeur })` |
+
+Hébergement : Streamlit Cloud ne peut pas héberger cette version. Le fichier `Dockerfile` construit l'interface et lance le serveur dans un seul conteneur, pour un hébergeur qui accepte les conteneurs (Render, Hugging Face Spaces, serveur du laboratoire…). Le serveur garde les simulations lancées en mémoire : il doit tourner en un seul processus, et une simulation lancée disparaît quand il redémarre.
+
 ### Avant chaque push : tests
 
 ```bash
 python -m pytest tests
 ```
 
-Chaque page de l'application est exécutée, en français et en anglais ; une erreur (faute de frappe, import manquant, texte sans traduction) fait échouer les tests. Ils tournent aussi sur GitHub à chaque push (`.github/workflows/tests.yml`).
+Chaque page de l'application Streamlit et chaque route du serveur de calcul sont exécutées, en français et en anglais ; une erreur (faute de frappe, import manquant, texte sans traduction) fait échouer les tests. Ils tournent aussi sur GitHub à chaque push (`.github/workflows/tests.yml`), où l'interface web est en plus construite.
 
 ### Langue de l'interface
 

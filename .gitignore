@@ -19,6 +19,12 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 # ------------------------------------------------------------
+# Interface web (web/) : bibliothèques téléchargées par « npm install » ;
+# l'interface construite (web/dist/) est déjà couverte par « dist/ » ci-dessus
+# ------------------------------------------------------------
+node_modules/
+
+# ------------------------------------------------------------
 # Environnements virtuels
 # ------------------------------------------------------------
 venv/

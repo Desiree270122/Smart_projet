@@ -26,7 +26,7 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 
 PAGES = sorted(str(p.relative_to(RACINE)).replace("\\", "/") for p in (RACINE / "vues").glob("[0-9]_*.py"))
 LANGUES = ["fr", "en"]
-SOURCES = [RACINE / "Accueil.py", *RACINE.glob("core/*.py"), *RACINE.glob("vues/*.py")]
+SOURCES = [RACINE / "Accueil.py", *RACINE.glob("core/*.py"), *RACINE.glob("vues/*.py"), *RACINE.glob("api/*.py")]
 
 
 @pytest.fixture(autouse=True)

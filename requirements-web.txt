@@ -1,0 +1,9 @@
+# Application web (serveur de calcul api/ + interface web/) : les dépendances de
+# l'application Streamlit, plus le serveur. Streamlit Cloud n'utilise que
+# requirements.txt ; ce fichier sert en local, pour les tests et pour l'hébergement
+# de l'application web.
+-r requirements.txt
+fastapi>=0.110,<1
+uvicorn>=0.29,<1
+python-multipart>=0.0.9,<1
+httpx>=0.27,<1

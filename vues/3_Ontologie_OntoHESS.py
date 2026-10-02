@@ -21,6 +21,7 @@ import streamlit as st
 
 import ems_core as core
 from core import ontology_explainer as ox
+from core import presentation
 from core.format import nombre, separateurs_plotly
 from core.i18n import lib, tr
 from core.navigation import pied_navigation
@@ -32,47 +33,12 @@ from core.style import COULEUR_DECISION, COULEUR_REFERENCE, COULEUR_SECONDAIRE, 
 C_ETAT = COULEUR_DECISION
 C_NOEUD = COULEUR_REFERENCE
 
-# Les quatre grandes catégories de concepts : (nom, ce qu'elle regroupe).
-CATEGORIES = {
-    "Component": (
-        ("Composants", "Components"),
-        ("Les éléments physiques : batterie Énergie, batterie Puissance, convertisseur, charge "
-         "(moteur) et l'architecture qui les relie.",
-         "The physical elements: Energy battery, Power battery, converter, load (motor) and the "
-         "architecture that connects them."),
-    ),
-    "ElectricalQuantity": (
-        ("Grandeurs électriques", "Electrical quantities"),
-        ("Les puissances, courants, tensions et résistances internes, et les seuils qui les bornent "
-         "(puissance maximale de la batterie Énergie, courant maximal…).",
-         "The powers, currents, voltages and internal resistances, and the thresholds that bound "
-         "them (maximum power of the Energy battery, maximum current…)."),
-    ),
-    "ManagementStrategy": (
-        ("Stratégie de gestion", "Management strategy"),
-        ("Ce qu'examine une stratégie de gestion : conditions sur le SOC, sur la charge, sur le "
-         "dépassement d'une limite, et le calcul de la puissance du convertisseur.",
-         "What a management strategy examines: conditions on the SOC, on the load, on exceeding a "
-         "limit, and the calculation of the converter power."),
-    ),
-    "SystemState": (
-        ("États du système", "System states"),
-        ("Les états du système : fonctionnement dans les limites de la batterie Énergie ou au-delà, "
-         "états de charge et états de puissance.",
-         "The system states: operation within the Energy battery's limits or beyond, states of "
-         "charge and power states."),
-    ),
-}
-
-TYPES = {
-    "mode": ("Mode de fonctionnement", "Operating mode"),
-    "repartition": ("Répartition de la puissance", "Power split"),
-    "courant": ("Limitation de courant", "Current limitation"),
-    "calcul": ("Calcul d'une grandeur", "Calculation of a quantity"),
-}
-SUJETS = {
-    "eb": ("batterie Énergie", "Energy battery"), "pb": ("batterie Puissance", "Power battery"),
-    "l": ("charge", "load"), "c": ("convertisseur", "converter"),
+CATEGORIES = presentation.categories_ontologie()
+TYPES = presentation.TYPES_REGLES
+SUJETS = presentation.SUJETS_REGLES
+COULEURS_ROLES = {
+    presentation.REFERENCE: COULEUR_REFERENCE, presentation.SECONDAIRE: COULEUR_SECONDAIRE,
+    presentation.DECISION: COULEUR_DECISION,
 }
 
 
@@ -203,11 +169,11 @@ st.markdown(tr(
 st.subheader(tr("B. Que décrit OntoHESS ?", "B. What does OntoHESS describe?"))
 colonnes = st.columns(len(hierarchie))
 for col, (racine, enfants) in zip(colonnes, hierarchie.items()):
-    nom_cat, description = CATEGORIES.get(racine, ((racine, racine), ("", "")))
+    nom_cat, description = CATEGORIES.get(racine, (racine, ""))
     with col:
         with st.container(border=True):
-            st.markdown(f"**{lib(nom_cat)}**")
-            st.caption(lib(description))
+            st.markdown(f"**{nom_cat}**")
+            st.caption(description)
             st.markdown(tr("{n} concepts", "{n} concepts", n=len(enfants)))
 
 with st.expander(tr("Détails pour les spécialistes de l'ontologie", "Details for ontology specialists")):
@@ -439,31 +405,7 @@ with onglet_flou:
 # D — Comment l'ontologie intervient dans les stratégies ?
 
 st.subheader(tr("D. Comment l'ontologie intervient dans les stratégies ?", "D. How does the ontology come into the strategies?"))
-aucun = tr("Aucun usage.", "Not used.")
-USAGES = {
-    "EMS_power_limitation": tr(
-        "Ne lit pas l'ontologie, mais prend exactement les décisions de ses règles de répartition R13 à R17.",
-        "Does not read the ontology, but makes exactly the decisions of its split rules R13 to R17.",
-    ),
-    "EMS_fuzzy_logic": tr(
-        "Ses règles reposent sur les concepts « état de charge » et « état de puissance » de l'ontologie.",
-        "Its rules rely on the ontology's “state of charge” and “power state” concepts.",
-    ),
-    "EMS_MLP": aucun,
-    "EMS_LSTM": aucun,
-    "EMS_GNN": tr(
-        "Pas d'usage direct ; son schéma reprend les composants du HESS (batteries, convertisseur, moteur, véhicule).",
-        "No direct use; its diagram uses the components of the HESS (batteries, converter, motor, vehicle).",
-    ),
-    "EMS_MLP_neurosymbolic": tr(
-        "Part des règles floues, reçoit des états déduits par l'ontologie, et reste sous le contrôle de ses règles R14 et R16.",
-        "Starts from the fuzzy rules, receives states inferred by the ontology, and stays under the control of its rules R14 and R16.",
-    ),
-    "EMS_LSTM_neurosymbolic": tr(
-        "Reçoit quatre états déduits par l'ontologie : forte demande, freinage, demande nulle, convertisseur proche de sa limite.",
-        "Receives four states inferred by the ontology: high demand, braking, zero demand, converter close to its limit.",
-    ),
-}
+USAGES = presentation.usages_ontologie()
 col_strategie = tr("Stratégie", "Strategy")
 st.dataframe(
     pd.DataFrame([{col_strategie: nom_affichage(c), tr("Usage de l'ontologie", "Use of the ontology"): u} for c, u in USAGES.items()])
@@ -475,45 +417,12 @@ st.markdown(tr(
     "**Les deux façons d'associer l'ontologie à un réseau de neurones**",
     "**The two ways of combining the ontology with a neural network**",
 ))
-ns1, ns2 = st.columns(2)
-with ns1:
-    with st.container(border=True):
-        st.markdown(tr("**NS-MLP** · les règles décident, le réseau corrige", "**NS-MLP** · the rules decide, the network corrects"))
-        st.markdown(
-            flux_html([
-                (tr("P_dem, SOC", "P_dem, SOC"), COULEUR_REFERENCE),
-                (tr("Règles floues", "Fuzzy rules"), COULEUR_SECONDAIRE),
-                (tr("Décision des règles", "Decision of the rules"), COULEUR_DECISION),
-                (tr("Correction du réseau (±{c} pts)", "Network correction (±{c} pts)", c=nombre(core.MLP_NS_MAX_DELTA * 100, 0)), COULEUR_SECONDAIRE),
-                (tr("Garde-fou R14/R16", "Safeguard R14/R16"), COULEUR_REFERENCE),
-                (tr("Décision finale", "Final decision"), COULEUR_DECISION),
-            ]),
-            unsafe_allow_html=True,
-        )
-        st.caption(tr(
-            "La décision se décompose exactement : part des règles + correction du réseau. Sous {r} % "
-            "de SOC de la batterie Puissance, les règles R14 et R16 reprennent la main en traction pour "
-            "préserver sa réserve.",
-            "The decision splits exactly: share from the rules + network correction. Below {r} % SOC of "
-            "the Power battery, rules R14 and R16 take over in traction to preserve its reserve.",
-            r=nombre(core.MLP_NS_RESERVE_PB_SOC * 100, 0),
-        ))
-with ns2:
-    with st.container(border=True):
-        st.markdown(tr("**NS-LSTM** · l'ontologie informe le réseau", "**NS-LSTM** · the ontology informs the network"))
-        st.markdown(
-            flux_html([
-                (tr("{w} dernières secondes + 4 états déduits par l'ontologie", "Last {w} seconds + 4 states inferred by the ontology",
-                    w=core.LSTM_WINDOW), COULEUR_REFERENCE),
-                (tr("Réseau LSTM", "LSTM network"), COULEUR_SECONDAIRE),
-                (tr("Décision finale", "Final decision"), COULEUR_DECISION),
-            ]),
-            unsafe_allow_html=True,
-        )
-        st.caption(tr(
-            "Les états déduits sont des entrées parmi d'autres : leur poids dans la décision se mesure après coup.",
-            "The inferred states are inputs among others: their weight in the decision is measured afterwards.",
-        ))
+for col, (titre_chaine, etapes, legende) in zip(st.columns(2), presentation.chaines_neuro_symboliques().values()):
+    with col:
+        with st.container(border=True):
+            st.markdown(titre_chaine)
+            st.markdown(flux_html([(texte, COULEURS_ROLES[role]) for texte, role in etapes]), unsafe_allow_html=True)
+            st.caption(legende)
 st.caption(tr(
     "Pour toutes les stratégies, l'ontologie sert aussi à expliquer : chaque décision est relue avec "
     "ses règles dans la page « Pourquoi cette décision ? ».",

@@ -1,0 +1,13 @@
+.git
+.github
+.venv
+venv
+.pytest_cache
+.qodo
+.vscode
+**/__pycache__
+**/.ipynb_checkpoints
+web/node_modules
+web/dist
+*.ipynb
+tests
